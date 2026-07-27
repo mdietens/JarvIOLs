@@ -245,22 +245,28 @@ def render_usaf_row(selected_iol, df_filtered, label):
         with img_cols[idx]:
             st.markdown(f"**{d:+.2f} D**")
             
-            # Formats possibles de noms de fichiers images
+            # Formatage de la pupille
             try:
                 pupil_val = float(selected_pupil)
-                pupil_str_1d = f"{pupil_val:.1f}"
+                pupil_str = f"{pupil_val:.1f}"
             except (ValueError, TypeError):
-                pupil_str_1d = str(selected_pupil)
+                pupil_str = str(selected_pupil)
+
+            # Prise en compte de la casse pour la lumière (ex: WL vs wl)
+            light_lower = str(selected_light).lower()
+            light_upper = str(selected_light).upper()
 
             candidates = [
-                # Format standard ex: PureSee_3.0_Photopic_ISO1_defocus_-0.50.jpg
-                f"{selected_iol}_{pupil_str_1d}_{selected_light}_{selected_cornea}_defocus_{d:.2f}.jpg",
-                # Format avec signe explicitement inclus ex: ..._defocus_+0.00.jpg
-                f"{selected_iol}_{pupil_str_1d}_{selected_light}_{selected_cornea}_defocus_{d:+.2f}.jpg",
-                # Format sans conversion de pupille
-                f"{selected_iol}_{selected_pupil}_{selected_light}_{selected_cornea}_defocus_{d:.2f}.jpg",
-                # Format avec defocus sans trailing zeros ex: ..._defocus_0.jpg
-                f"{selected_iol}_{pupil_str_1d}_{selected_light}_{selected_cornea}_defocus_{float(d)}.jpg"
+                # 1. Format exact correspondant à votre fichier réel : wl en minuscules (ex: PureSee_3.0_wl_ISO2_defocus_-0.25.jpg)
+                f"{selected_iol}_{pupil_str}_{light_lower}_{selected_cornea}_defocus_{d:.2f}.jpg",
+                # 2. Format avec WL en majuscules
+                f"{selected_iol}_{pupil_str}_{light_upper}_{selected_cornea}_defocus_{d:.2f}.jpg",
+                # 3. Formats avec signe + pour les defocus positifs (ex: +0.25)
+                f"{selected_iol}_{pupil_str}_{light_lower}_{selected_cornea}_defocus_{d:+.2f}.jpg",
+                f"{selected_iol}_{pupil_str}_{light_upper}_{selected_cornea}_defocus_{d:+.2f}.jpg",
+                # 4. Variantes avec pupille brute
+                f"{selected_iol}_{selected_pupil}_{light_lower}_{selected_cornea}_defocus_{d:.2f}.jpg",
+                f"{selected_iol}_{selected_pupil}_{light_upper}_{selected_cornea}_defocus_{d:.2f}.jpg",
             ]
             
             img_loaded = None
