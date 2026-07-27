@@ -239,20 +239,34 @@ def render_usaf_row(selected_iol, df_filtered, label):
         return
         
     img_cols = st.columns(5)
+    iol_folder = IMAGES_BASE_DIR / selected_iol
+
     for idx, d in enumerate(sorted_defocus_inputs):
         with img_cols[idx]:
             st.markdown(f"**{d:+.2f} D**")
             
+            # Formats possibles de noms de fichiers images
+            try:
+                pupil_val = float(selected_pupil)
+                pupil_str_1d = f"{pupil_val:.1f}"
+            except (ValueError, TypeError):
+                pupil_str_1d = str(selected_pupil)
+
             candidates = [
-                f"{selected_iol}_{float(selected_pupil):.1f}_{selected_light}_{selected_cornea}_defocus_{d:.2f}.jpg",
+                # Format standard ex: PureSee_3.0_Photopic_ISO1_defocus_-0.50.jpg
+                f"{selected_iol}_{pupil_str_1d}_{selected_light}_{selected_cornea}_defocus_{d:.2f}.jpg",
+                # Format avec signe explicitement inclus ex: ..._defocus_+0.00.jpg
+                f"{selected_iol}_{pupil_str_1d}_{selected_light}_{selected_cornea}_defocus_{d:+.2f}.jpg",
+                # Format sans conversion de pupille
                 f"{selected_iol}_{selected_pupil}_{selected_light}_{selected_cornea}_defocus_{d:.2f}.jpg",
-                f"{selected_iol}_{float(selected_pupil):.1f}_{selected_light}_{selected_cornea}_defocus_{float(d)}.jpg"
+                # Format avec defocus sans trailing zeros ex: ..._defocus_0.jpg
+                f"{selected_iol}_{pupil_str_1d}_{selected_light}_{selected_cornea}_defocus_{float(d)}.jpg"
             ]
             
             img_loaded = None
             for filename in candidates:
-                img_path = os.path.join(IMAGES_BASE_DIR, selected_iol, filename)
-                img_loaded = load_image_cached(img_path)
+                img_path = iol_folder / filename
+                img_loaded = load_image_cached(str(img_path))
                 if img_loaded:
                     break
             
