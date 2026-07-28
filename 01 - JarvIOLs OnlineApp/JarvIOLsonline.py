@@ -73,6 +73,7 @@ mtf_columns = [col for col in df.columns if col.startswith('MTF_')]
 available_frequencies = sorted([int(col.split('_')[1]) for col in mtf_columns]) if mtf_columns else [25]
 
 COLOR_PALETTE = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b"]
+COLOR_PALETTE_GREEN = ["#2ca02c", "#17becf", "#9467bd", "#ff7f0e", "#bcbd22", "#8c564b"]
 COLOR_PALETTE_CYAN = ["#2BD9FE", "#e377c2", "#bcbd22", "#17becf", "#f7b6d2", "#c49c94"]
 
 # --------------------------------------------------------------------
@@ -186,11 +187,18 @@ for i in range(num_configs):
 
 # Calcul des plages Y globales
 all_va_vals = []
+all_mtfa_vals = []
 all_tf_vals = []
 
 for df_sub in filtered_dfs:
     if not df_sub.empty:
-        all_va_vals.extend(df_sub['VA'].dropna().tolist())
+        if 'VA' in df_sub.columns:
+            va_vals = df_sub['VA'].dropna()
+            all_va_vals.extend(va_vals.tolist())
+            # MTFa = 0.085 / (VA + 0.21)
+            mtfa_vals = 0.085 / (va_vals + 0.21)
+            all_mtfa_vals.extend(mtfa_vals.tolist())
+            
         if target_mtf_column in df_sub.columns:
             all_tf_vals.extend(df_sub[target_mtf_column].dropna().tolist())
 
@@ -200,6 +208,13 @@ if all_va_vals:
     global_va_range = [b_min - margin, b_max + margin]
 else:
     global_va_range = None
+
+if all_mtfa_vals:
+    b_min, b_max = min(all_mtfa_vals), max(all_mtfa_vals)
+    margin = (b_max - b_min) * 0.05 or 0.05
+    global_mtfa_range = [b_min - margin, b_max + margin]
+else:
+    global_mtfa_range = None
 
 if all_tf_vals:
     b_min, b_max = min(all_tf_vals), max(all_tf_vals)
@@ -246,7 +261,7 @@ def calculate_dof_mtf(df_sub, target_mtf_col, target_threshold=0.1):
 def generate_va_figure(datasets, labels, colors, title, va_range, target_defocus):
     fig = go.Figure()
     for df_sub, label, color in zip(datasets, labels, colors):
-        if not df_sub.empty:
+        if not df_sub.empty and 'VA' in df_sub.columns:
             fig.add_trace(go.Scatter(
                 x=df_sub['Defocus'], y=df_sub['VA'], 
                 mode='lines+markers', name=label,
@@ -265,6 +280,27 @@ def generate_va_figure(datasets, labels, colors, title, va_range, target_defocus
         fig.update_yaxes(range=[va_range[1], va_range[0]])
     else:
         fig.update_yaxes(autorange="reversed")
+    return fig
+
+def generate_mtfa_figure(datasets, labels, colors, title, mtfa_range, target_defocus):
+    fig = go.Figure()
+    for df_sub, label, color in zip(datasets, labels, colors):
+        if not df_sub.empty and 'VA' in df_sub.columns:
+            mtfa_vals = 0.085 / (df_sub['VA'] + 0.21)
+            fig.add_trace(go.Scatter(
+                x=df_sub['Defocus'], y=mtfa_vals, 
+                mode='lines+markers', name=label,
+                line=dict(width=2.5, color=color)
+            ))
+    for idx, d in enumerate(target_defocus):
+        fig.add_vline(
+            x=d, line_width=1.5, line_color="red", opacity=0.85,
+            annotation_text=f"D={d:.2f}D",
+            annotation_position="top left" if idx == 0 else "top right"
+        )
+    fig.update_layout(title=title, xaxis_title="Defocus (D)", yaxis_title="MTFa", height=350, margin=dict(l=40, r=40, t=40, b=40), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+    if mtfa_range:
+        fig.update_yaxes(range=mtfa_range)
     return fig
 
 def generate_mtf_figure(datasets, labels, colors, title, tf_range, target_defocus):
@@ -323,8 +359,15 @@ if "1)" in comparison_mode:
             if df_sub.empty:
                 st.warning(f"No data for {iol_name}.")
             else:
+                # 1. Graph VA
                 fig_va = generate_va_figure([df_sub], [f"VA ({iol_name})"], [COLOR_PALETTE[i % len(COLOR_PALETTE)]], f"Visual Acuity - Config {conf_label}", global_va_range, target_defocus_list)
                 st.plotly_chart(fig_va, use_container_width=True)
+                
+                # 2. Graph TF MTFa (Placé au milieu)
+                fig_mtfa = generate_mtfa_figure([df_sub], [f"MTFa ({iol_name})"], [COLOR_PALETTE_GREEN[i % len(COLOR_PALETTE_GREEN)]], f"TF MTFa - Config {conf_label}", global_mtfa_range, target_defocus_list)
+                st.plotly_chart(fig_mtfa, use_container_width=True)
+
+                # 3. Graph MTF
                 fig_tf = generate_mtf_figure([df_sub], [f"MTF ({iol_name})"], [COLOR_PALETTE_CYAN[i % len(COLOR_PALETTE_CYAN)]], f"MTF @ {selected_freq} LP/mm - Config {conf_label}", global_tf_range, target_defocus_list)
                 st.plotly_chart(fig_tf, use_container_width=True)
 
@@ -338,16 +381,24 @@ if "1)" in comparison_mode:
         st.dataframe(df_dof_mtf, use_container_width=True, hide_index=True)
 else:
     st.markdown("### Combined Metrics Comparison")
-    col_comb_left, col_comb_right = st.columns(2)
     labels_list = [f"{chr(65+i)}: {selected_iols[i]}" for i in range(num_configs)]
+    
+    # Mode Superposé
+    fig_va_combined = generate_va_figure(filtered_dfs, labels_list, COLOR_PALETTE[:num_configs], "Visual Acuity (VA) - Superimposed", global_va_range, target_defocus_list)
+    st.plotly_chart(fig_va_combined, use_container_width=True)
+    
+    fig_mtfa_combined = generate_mtfa_figure(filtered_dfs, labels_list, COLOR_PALETTE_GREEN[:num_configs], "TF MTFa - Superimposed", global_mtfa_range, target_defocus_list)
+    st.plotly_chart(fig_mtfa_combined, use_container_width=True)
+
+    fig_tf_combined = generate_mtf_figure(filtered_dfs, labels_list, COLOR_PALETTE_CYAN[:num_configs], f"Through Focus (MTF) @ {selected_freq} LP/mm - Superimposed", global_tf_range, target_defocus_list)
+    st.plotly_chart(fig_tf_combined, use_container_width=True)
+
+    st.markdown("---")
+    col_comb_left, col_comb_right = st.columns(2)
     with col_comb_left:
-        fig_va_combined = generate_va_figure(filtered_dfs, labels_list, COLOR_PALETTE[:num_configs], "Visual Acuity (VA) - Superimposed", global_va_range, target_defocus_list)
-        st.plotly_chart(fig_va_combined, use_container_width=True)
         st.subheader("📋 VA Depth of Field (DOF)")
         st.dataframe(df_dof_va, use_container_width=True, hide_index=True)
     with col_comb_right:
-        fig_tf_combined = generate_mtf_figure(filtered_dfs, labels_list, COLOR_PALETTE_CYAN[:num_configs], f"Through Focus (MTF) @ {selected_freq} LP/mm - Superimposed", global_tf_range, target_defocus_list)
-        st.plotly_chart(fig_tf_combined, use_container_width=True)
         st.subheader(f"📋 MTF Depth of Field (DOF @ {selected_freq} LP/mm)")
         st.dataframe(df_dof_mtf, use_container_width=True, hide_index=True)
 
