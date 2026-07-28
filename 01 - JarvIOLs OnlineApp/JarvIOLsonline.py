@@ -1,480 +1,212 @@
-import streamlit as st
-from pathlib import Path
-import pandas as pd
-import numpy as np
-import plotly.graph_objects as go
-from PIL import Image
 import os
+import re
+import matplotlib.pyplot as plt
+import pandas as pd
+import streamlit as st
 
-# --------------------------------------------------------------------
-# CONFIGURATION DE LA PAGE
-# --------------------------------------------------------------------
-st.set_page_config(layout="wide", page_title="IOL Comparator - BVI", page_icon="🔬")
+# ---------------------------------------------------------
+# CONFIGURATION DE LA PAGE STREAMLIT
+# ---------------------------------------------------------
+st.set_page_config(page_title="Analyse Optique MTF", layout="wide")
 
-# --------------------------------------------------------------------
-# 1. AUTHENTIFICATION PAR MOT DE PASSE
-# --------------------------------------------------------------------
-def check_password():
-    if "authenticated" not in st.session_state:
-        st.session_state["authenticated"] = False
+# ---------------------------------------------------------
+# 1. GESTION DES CHEMINS ET CHARGEMENT DES FICHIERS EXCEL
+# ---------------------------------------------------------
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-    if st.session_state["authenticated"]:
-        return True
+# Chemins des fichiers Excel dans le même dossier
+PATH_EXCEL_PYTHONZ = os.path.join(BASE_DIR, "Excel_PythonZ.xlsx")
+PATH_EXCEL_FS = os.path.join(BASE_DIR, "Excel_FS.xlsx")
 
-    st.title("🔒 Accès Sécurisé - IOL Comparator BVI")
-    st.markdown("Veuillez saisir le mot de passe d'accès pour accéder à l'outil en ligne.")
-    
-    pwd_input = st.text_input("Mot de passe", type="password")
-    if st.button("Se connecter", type="primary"):
-        target_pwd = st.secrets.get("PASSWORD", "JarvIOLs-BVI")
-        if pwd_input == target_pwd:
-            st.session_state["authenticated"] = True
-            st.rerun()
-        else:
-            st.error("❌ Mot de passe incorrect.")
-    return False
 
-if not check_password():
+@st.cache_data
+def load_excel_data(file_path):
+    """Charge et nettoie les données d'un fichier Excel."""
+    if not os.path.exists(file_path):
+        return None
+    try:
+        df = pd.read_excel(file_path)
+        # Nettoyage des noms de colonnes
+        df.columns = df.columns.str.strip()
+
+        # Formatage de l'ouverture pupillaire pour correspondre aux chaînes (ex: "3.5", "3.5mm")
+        if "Ouverture pupillaire" in df.columns:
+            df["Ouverture pupillaire"] = df["Ouverture pupillaire"].astype(str)
+        if "Ouverture" in df.columns:
+            df["Ouverture"] = df["Ouverture"].astype(str)
+
+        return df
+    except Exception as e:
+        st.error(f"Erreur lors du chargement de {os.path.basename(file_path)} : {e}")
+        return None
+
+
+# Chargement des deux dataframes
+df_pythonz = load_excel_data(PATH_EXCEL_PYTHONZ)
+df_fs = load_excel_data(PATH_EXCEL_FS)
+
+
+# Helper function pour renommer les colonnes de manière uniforme si besoin
+def normalize_df_columns(df):
+    if df is None:
+        return None
+    rename_mapping = {
+        "Nom de l'IOL": "Nom_IOL",
+        "Nom de l'I": "Nom_IOL",
+        "Ouverture pupillaire": "Ouverture",
+        "Condition de lumière": "Condition",
+        "Type de cornée": "Type_cornee",
+        "Type de cc": "Type_cornee",
+    }
+    return df.rename(columns=rename_mapping)
+
+
+df_pythonz = normalize_df_columns(df_pythonz)
+df_fs = normalize_df_columns(df_fs)
+
+
+# ---------------------------------------------------------
+# 2. BARRE LATÉRALE (SIDEBAR) - FILTRES ET PARAMÈTRES
+# ---------------------------------------------------------
+st.sidebar.title("Configuration & Filtres")
+
+# Extraction des options de filtrage disponibles (en se basant sur le DF principal ou FS)
+reference_df = df_fs if df_fs is not None else df_pythonz
+
+if reference_df is not None:
+    iol_list = reference_df["Nom_IOL"].unique().tolist()
+    aperture_list = reference_df["Ouverture"].unique().tolist()
+    light_list = reference_df["Condition"].unique().tolist()
+    cornea_list = reference_df["Type_cornee"].unique().tolist()
+
+    selected_iol = st.sidebar.selectbox("Modèle IOL", iol_list)
+    selected_aperture = st.sidebar.selectbox("Ouverture pupillaire", aperture_list)
+    selected_light = st.sidebar.selectbox("Condition de lumière", light_list)
+    selected_cornea = st.sidebar.selectbox("Type de cornée", cornea_list)
+else:
+    st.sidebar.warning("Veuillez vérifier la présence des fichiers Excel dans le dossier.")
     st.stop()
 
-# --------------------------------------------------------------------
-# 2. PATHS & CACHING (OPTIMISATIONS)
-# --------------------------------------------------------------------
-BASE_DIR = Path(__file__).resolve().parent
-EXCEL_PATH = BASE_DIR / "Excel_PythonZ.xlsx"
-IMAGES_BASE_DIR = BASE_DIR / "Images"
+st.sidebar.markdown("---")
+st.sidebar.subheader("Graphes - Échelles Y")
 
-@st.cache_data(show_spinner="Chargement des données...")
-def load_iol_data(path):
-    if os.path.exists(path):
-        return pd.read_excel(path)
-    return pd.DataFrame(columns=['IOL_Model', 'Pupil_Size', 'Light_Condition', 'Cornea_Type', 'Defocus', 'VA'])
-
-@st.cache_data(show_spinner=False)
-def load_image_cached(img_path):
-    """Mise en cache de l'ouverture des images pour fluidifier l'affichage."""
-    if os.path.exists(img_path):
-        return Image.open(img_path)
-    return None
-
-df = load_iol_data(EXCEL_PATH)
-
-if df.empty:
-    st.error(f"Fichier Excel introuvable ou vide à l'emplacement : {EXCEL_PATH}")
-    st.stop()
-
-# Extraction des paramètres
-available_models = sorted(df['IOL_Model'].unique()) if not df.empty else ["Z", "Ma"]
-available_pupils = sorted(df['Pupil_Size'].unique()) if not df.empty else [3]
-available_lights = sorted(df['Light_Condition'].unique()) if not df.empty else ["gl"]
-available_corneas = sorted(df['Cornea_Type'].unique()) if not df.empty else ["ISO2", "ISO3"]
-
-mtf_columns = [col for col in df.columns if col.startswith('MTF_')]
-available_frequencies = sorted([int(col.split('_')[1]) for col in mtf_columns]) if mtf_columns else [25]
-
-COLOR_PALETTE = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b"]
-COLOR_PALETTE_GREEN = ["#2ca02c", "#17becf", "#9467bd", "#ff7f0e", "#bcbd22", "#8c564b"]
-COLOR_PALETTE_CYAN = ["#2BD9FE", "#e377c2", "#bcbd22", "#17becf", "#f7b6d2", "#c49c94"]
-
-# --------------------------------------------------------------------
-# 3. BARRE LATÉRALE : FILTRES OPTIQUES & OPTIONS
-# --------------------------------------------------------------------
-st.sidebar.header("🔬 Optical Parameters")
-selected_pupil = st.sidebar.selectbox("Pupil aperture (mm)", available_pupils)
-selected_light = st.sidebar.selectbox("Light Condition", available_lights)
-selected_cornea = st.sidebar.selectbox("Cornea model", available_corneas)
-
-selected_freq = st.sidebar.selectbox("Spatial frequencies for Through-Focus (LP/mm)", available_frequencies)
-target_mtf_column = f"MTF_{selected_freq}"
+# Limites Y globales/pour les graphes MTF / VA / MTFa
+y_min_global = st.sidebar.number_input("Y min (MTF/VA/MTFa)", value=0.0, step=0.1)
+y_max_global = st.sidebar.number_input("Y max (MTF/VA/MTFa)", value=1.0, step=0.1)
 
 st.sidebar.markdown("---")
-st.sidebar.header("⚡ Light Energy Integration Range")
-col_min, col_max = st.sidebar.columns(2)
-default_defocus_min = float(df['Defocus'].min()) if not df.empty and 'Defocus' in df.columns else -1.0
-default_defocus_max = float(df['Defocus'].max()) if not df.empty and 'Defocus' in df.columns else 5.0
+st.sidebar.subheader("Paramètres Frequency Sweep")
 
-with col_min:
-    defocus_min_energy = st.number_input("Defocus Min (D)", value=default_defocus_min, step=0.25, format="%.2f")
-with col_max:
-    defocus_max_energy = st.number_input("Defocus Max (D)", value=default_defocus_max, step=0.25, format="%.2f")
+# 2) Menu déroulant pour le graphe de Frequency Sweep
+fs_column_choice = st.sidebar.selectbox(
+    "Condition FS à afficher",
+    options=["FS at distance", "FS at 1.50D", "FS at 2.5D"],
+    index=0,
+)
 
-# Paramètres DOF (X, Y, Z)
-st.sidebar.markdown("---")
-st.sidebar.header("🎯 DOF Parameters")
-st.sidebar.caption("Saisissez 3 valeurs de defocus (X, Y, Z) à mettre en évidence :")
-col_x, col_y, col_z = st.sidebar.columns(3)
-with col_x:
-    defocus_target_x = st.number_input("Defocus X (D)", value=0.00, step=0.25, format="%.2f", key="def_x")
-with col_y:
-    defocus_target_y = st.number_input("Defocus Y (D)", value=1.50, step=0.25, format="%.2f", key="def_y")
-with col_z:
-    defocus_target_z = st.number_input("Defocus Z (D)", value=2.50, step=0.25, format="%.2f", key="def_z")
+# 2) Champ pour définir la valeur Frequency max (entre 0 et 600)
+fs_max_freq = st.sidebar.number_input(
+    "Frequency max",
+    min_value=0,
+    max_value=600,
+    value=100,
+    step=10,
+    help="Valeur maximale de la fréquence affichée sur l'axe X (0 à 600)",
+)
 
-target_defocus_list = [defocus_target_x, defocus_target_y, defocus_target_z]
+# 6) Gestion des limites Y spécifique au graphe Frequency Sweep
+fs_y_min = st.sidebar.number_input("Y min (Frequency Sweep)", value=0.0, step=0.1)
+fs_y_max = st.sidebar.number_input("Y max (Frequency Sweep)", value=1.0, step=0.1)
 
-st.sidebar.markdown("---")
-st.sidebar.header("⚙️ Comparison Mode")
-comparison_mode = st.sidebar.radio(
-    "Choose visualization:",
-    [
-        "1) Multi-Columns (Side-by-Side)", 
-        "2) Superimposed (Same graph)"
+
+# ---------------------------------------------------------
+# 3. AFFICHAGE DES GRAPHIQUES
+# ---------------------------------------------------------
+st.title("Analyse Optique IOL")
+
+# --- GRAPHE THROUGH FOCUS MTF ---
+st.header("Through Focus MTF")
+
+if df_pythonz is not None:
+    # Filtrage du DataFrame PythonZ
+    df_tf_filtered = df_pythonz[
+        (df_pythonz["Nom_IOL"] == selected_iol)
+        & (df_pythonz["Ouverture"] == str(selected_aperture))
+        & (df_pythonz["Condition"] == selected_light)
+        & (df_pythonz["Type_cornee"] == selected_cornea)
     ]
-)
 
-st.sidebar.markdown("---")
-st.sidebar.header("🖼️ Selection of Defocus for USAF Targets (-1 to 5 D)")
-defocus_inputs = []
-cols_defocus = st.sidebar.columns(5)
-default_defocus = [-0.5, 0.0, 1.0, 2.0, 3.0]
-
-for i in range(5):
-    with cols_defocus[i]:
-        val = st.number_input(
-            f"D{i+1}", 
-            min_value=-1.0, 
-            max_value=5.0, 
-            value=float(default_defocus[i]), 
-            step=0.1, 
-            format="%.2f"
+    if not df_tf_filtered.empty and "Defocus" in df_tf_filtered.columns and "MTF" in df_tf_filtered.columns:
+        fig_tf, ax_tf = plt.subplots(figsize=(9, 4.5))
+        ax_tf.plot(
+            df_tf_filtered["Defocus"],
+            df_tf_filtered["MTF"],
+            marker="o",
+            linestyle="-",
+            color="#2ca02c",
+            label="Through Focus MTF",
         )
-        defocus_inputs.append(round(val, 2))
-
-sorted_defocus_inputs = sorted(defocus_inputs)
-
-st.sidebar.markdown("---")
-st.sidebar.header("🔢 Number of Configurations")
-num_configs = st.sidebar.number_input(
-    "Select number of IOLs to compare (1 - 6):",
-    min_value=1,
-    max_value=6,
-    value=2,
-    step=1
-)
-
-if st.sidebar.button("🚪 Déconnexion"):
-    st.session_state["authenticated"] = False
-    st.rerun()
-
-# --------------------------------------------------------------------
-# 4. INTERFACE PRINCIPALE & FILTRAGE DES DONNÉES
-# --------------------------------------------------------------------
-st.title("📊 IOL Comparative Analysis Tool")
-
-main_cols = st.columns(num_configs)
-selected_iols = []
-filtered_dfs = []
-
-for i in range(num_configs):
-    with main_cols[i]:
-        st.header(f"Config {chr(65+i)}")
-        default_idx = min(i, len(available_models) - 1)
-        iol_selected = st.selectbox(
-            f"Choose IOL ({chr(65+i)})", 
-            available_models, 
-            index=default_idx, 
-            key=f"select_iol_{i}"
-        )
-        selected_iols.append(iol_selected)
-        
-        df_f = df[
-            (df['IOL_Model'] == iol_selected) & 
-            (df['Pupil_Size'] == selected_pupil) & 
-            (df['Light_Condition'] == selected_light) & 
-            (df['Cornea_Type'] == selected_cornea)
-        ].sort_values(by='Defocus')
-        filtered_dfs.append(df_f)
-
-# Calcul des plages Y globales
-all_va_vals = []
-all_mtfa_vals = []
-all_tf_vals = []
-
-for df_sub in filtered_dfs:
-    if not df_sub.empty:
-        if 'VA' in df_sub.columns:
-            va_vals = df_sub['VA'].dropna()
-            all_va_vals.extend(va_vals.tolist())
-            # MTFa = 0.085 / (VA + 0.21)
-            mtfa_vals = 0.085 / (va_vals + 0.21)
-            all_mtfa_vals.extend(mtfa_vals.tolist())
-            
-        if target_mtf_column in df_sub.columns:
-            all_tf_vals.extend(df_sub[target_mtf_column].dropna().tolist())
-
-if all_va_vals:
-    b_min, b_max = min(all_va_vals), max(all_va_vals)
-    margin = (b_max - b_min) * 0.05 or 0.05
-    global_va_range = [b_min - margin, b_max + margin]
-else:
-    global_va_range = None
-
-if all_mtfa_vals:
-    b_min, b_max = min(all_mtfa_vals), max(all_mtfa_vals)
-    margin = (b_max - b_min) * 0.05 or 0.05
-    global_mtfa_range = [b_min - margin, b_max + margin]
-else:
-    global_mtfa_range = None
-
-if all_tf_vals:
-    b_min, b_max = min(all_tf_vals), max(all_tf_vals)
-    margin = (b_max - b_min) * 0.05 or 0.05
-    global_tf_range = [b_min - margin, b_max + margin]
-else:
-    global_tf_range = None
-
-# --------------------------------------------------------------------
-# 5. FONCTIONS DOF ET CRÉATION DES GRAPHIQUES
-# --------------------------------------------------------------------
-def calculate_dof_va(df_sub, target_threshold):
-    if df_sub.empty or 'VA' not in df_sub.columns or 'Defocus' not in df_sub.columns:
-        return np.nan
-    best_idx = df_sub['VA'].idxmin()
-    best_defocus = df_sub.loc[best_idx, 'Defocus']
-    sub_pos = df_sub[df_sub['Defocus'] >= best_defocus].sort_values(by='Defocus').reset_index(drop=True)
-    if sub_pos.empty:
-        return np.nan
-    last_valid_defocus = best_defocus
-    for idx, row in sub_pos.iterrows():
-        if row['VA'] <= target_threshold:
-            last_valid_defocus = row['Defocus']
-        else:
-            break
-    return round(abs(last_valid_defocus - best_defocus), 2)
-
-def calculate_dof_mtf(df_sub, target_mtf_col, target_threshold=0.1):
-    if df_sub.empty or target_mtf_col not in df_sub.columns or 'Defocus' not in df_sub.columns:
-        return np.nan
-    best_idx = df_sub[target_mtf_col].idxmax()
-    best_defocus = df_sub.loc[best_idx, 'Defocus']
-    sub_pos = df_sub[df_sub['Defocus'] >= best_defocus].sort_values(by='Defocus').reset_index(drop=True)
-    if sub_pos.empty:
-        return np.nan
-    last_valid_defocus = best_defocus
-    for idx, row in sub_pos.iterrows():
-        if row[target_mtf_col] >= target_threshold:
-            last_valid_defocus = row['Defocus']
-        else:
-            break
-    return round(abs(last_valid_defocus - best_defocus), 2)
-
-def generate_va_figure(datasets, labels, colors, title, va_range, target_defocus):
-    fig = go.Figure()
-    for df_sub, label, color in zip(datasets, labels, colors):
-        if not df_sub.empty and 'VA' in df_sub.columns:
-            fig.add_trace(go.Scatter(
-                x=df_sub['Defocus'], y=df_sub['VA'], 
-                mode='lines+markers', name=label,
-                line=dict(width=2.5, color=color)
-            ))
-    for idx, d in enumerate(target_defocus):
-        fig.add_vline(
-            x=d, line_width=1.5, line_color="red", opacity=0.85,
-            annotation_text=f"D={d:.2f}D",
-            annotation_position="top left" if idx == 0 else "top right"
-        )
-    fig.add_hline(y=0.1, line_width=1.5, line_dash="dot", line_color="black", opacity=0.8, annotation_text="0.1 LogMAR", annotation_position="bottom right")
-    fig.add_hline(y=0.2, line_width=1.5, line_dash="dot", line_color="black", opacity=0.8, annotation_text="0.2 LogMAR", annotation_position="bottom right")
-    fig.update_layout(title=title, xaxis_title="Defocus (D)", yaxis_title="VA (LogMAR)", height=350, margin=dict(l=40, r=40, t=40, b=40), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-    if va_range:
-        fig.update_yaxes(range=[va_range[1], va_range[0]])
+        ax_tf.set_title(f"Through Focus MTF - {selected_iol} ({selected_aperture}, {selected_light}, {selected_cornea})")
+        ax_tf.set_xlabel("Defocus (D)")
+        ax_tf.set_ylabel("MTF")
+        ax_tf.set_ylim(y_min_global, y_max_global)
+        ax_tf.grid(True, linestyle="--", alpha=0.5)
+        ax_tf.legend()
+        st.pyplot(fig_tf)
     else:
-        fig.update_yaxes(autorange="reversed")
-    return fig
-
-def generate_mtfa_figure(datasets, labels, colors, title, mtfa_range, target_defocus):
-    fig = go.Figure()
-    for df_sub, label, color in zip(datasets, labels, colors):
-        if not df_sub.empty and 'VA' in df_sub.columns:
-            mtfa_vals = 0.085 / (df_sub['VA'] + 0.21)
-            fig.add_trace(go.Scatter(
-                x=df_sub['Defocus'], y=mtfa_vals, 
-                mode='lines+markers', name=label,
-                line=dict(width=2.5, color=color)
-            ))
-    for idx, d in enumerate(target_defocus):
-        fig.add_vline(
-            x=d, line_width=1.5, line_color="red", opacity=0.85,
-            annotation_text=f"D={d:.2f}D",
-            annotation_position="top left" if idx == 0 else "top right"
-        )
-    fig.update_layout(title=title, xaxis_title="Defocus (D)", yaxis_title="MTFa", height=350, margin=dict(l=40, r=40, t=40, b=40), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-    if mtfa_range:
-        fig.update_yaxes(range=mtfa_range)
-    return fig
-
-def generate_mtf_figure(datasets, labels, colors, title, tf_range, target_defocus):
-    fig = go.Figure()
-    for df_sub, label, color in zip(datasets, labels, colors):
-        if not df_sub.empty:
-            y_data = df_sub[target_mtf_column] if target_mtf_column in df_sub.columns else [0] * len(df_sub)
-            fig.add_trace(go.Scatter(
-                x=df_sub['Defocus'], y=y_data, 
-                mode='lines+markers', name=label,
-                line=dict(width=2.5, color=color)
-            ))
-    for idx, d in enumerate(target_defocus):
-        fig.add_vline(
-            x=d, line_width=1.5, line_color="red", opacity=0.85,
-            annotation_text=f"D={d:.2f}D",
-            annotation_position="top left" if idx == 0 else "top right"
-        )
-    fig.add_hline(y=0.1, line_width=1.5, line_dash="dot", line_color="black", opacity=0.8, annotation_text="0.1 MTF", annotation_position="top right")
-    fig.update_layout(title=title, xaxis_title="Defocus (D)", yaxis_title="MTF Value", height=350, margin=dict(l=40, r=40, t=40, b=40), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-    if tf_range:
-        fig.update_yaxes(range=tf_range)
-    return fig
-
-# Construction des tableaux de synthèse DOF
-dof_va_rows = []
-for i in range(num_configs):
-    df_sub = filtered_dfs[i]
-    iol_name = selected_iols[i]
-    conf_label = f"Config {chr(65+i)} ({iol_name})"
-    dof_va_rows.append({
-        "Configuration IOL": conf_label,
-        "DOF @ 0.1 LogMAR (D)": calculate_dof_va(df_sub, 0.1),
-        "DOF @ 0.2 LogMAR (D)": calculate_dof_va(df_sub, 0.2)
-    })
-df_dof_va = pd.DataFrame(dof_va_rows)
-
-dof_mtf_rows = []
-for i in range(num_configs):
-    df_sub = filtered_dfs[i]
-    iol_name = selected_iols[i]
-    conf_label = f"Config {chr(65+i)} ({iol_name})"
-    dof_mtf_rows.append({
-        "Configuration IOL": conf_label,
-        "DOF MTF @ 0.1 (D)": calculate_dof_mtf(df_sub, target_mtf_column, 0.1)
-    })
-df_dof_mtf = pd.DataFrame(dof_mtf_rows)
-
-# Affichage des graphiques et synthèses
-if "1)" in comparison_mode:
-    for i in range(num_configs):
-        with main_cols[i]:
-            df_sub = filtered_dfs[i]
-            iol_name = selected_iols[i]
-            conf_label = chr(65+i)
-            if df_sub.empty:
-                st.warning(f"No data for {iol_name}.")
-            else:
-                # 1. Graph VA
-                fig_va = generate_va_figure([df_sub], [f"VA ({iol_name})"], [COLOR_PALETTE[i % len(COLOR_PALETTE)]], f"Visual Acuity - Config {conf_label}", global_va_range, target_defocus_list)
-                st.plotly_chart(fig_va, use_container_width=True)
-                
-                # 2. Graph TF MTFa (Placé au milieu)
-                fig_mtfa = generate_mtfa_figure([df_sub], [f"MTFa ({iol_name})"], [COLOR_PALETTE_GREEN[i % len(COLOR_PALETTE_GREEN)]], f"TF MTFa - Config {conf_label}", global_mtfa_range, target_defocus_list)
-                st.plotly_chart(fig_mtfa, use_container_width=True)
-
-                # 3. Graph MTF
-                fig_tf = generate_mtf_figure([df_sub], [f"MTF ({iol_name})"], [COLOR_PALETTE_CYAN[i % len(COLOR_PALETTE_CYAN)]], f"MTF @ {selected_freq} LP/mm - Config {conf_label}", global_tf_range, target_defocus_list)
-                st.plotly_chart(fig_tf, use_container_width=True)
-
-    st.markdown("### 📊 Depth of Field (DOF) Summary Tables")
-    col_t1, col_t2 = st.columns(2)
-    with col_t1:
-        st.subheader("Visual Acuity (VA) DOF")
-        st.dataframe(df_dof_va, use_container_width=True, hide_index=True)
-    with col_t2:
-        st.subheader(f"MTF Through-Focus DOF (@ {selected_freq} LP/mm)")
-        st.dataframe(df_dof_mtf, use_container_width=True, hide_index=True)
+        st.info("Aucune donnée Through Focus MTF pour cette sélection.")
 else:
-    st.markdown("### Combined Metrics Comparison")
-    labels_list = [f"{chr(65+i)}: {selected_iols[i]}" for i in range(num_configs)]
-    
-    # Mode Superposé
-    fig_va_combined = generate_va_figure(filtered_dfs, labels_list, COLOR_PALETTE[:num_configs], "Visual Acuity (VA) - Superimposed", global_va_range, target_defocus_list)
-    st.plotly_chart(fig_va_combined, use_container_width=True)
-    
-    fig_mtfa_combined = generate_mtfa_figure(filtered_dfs, labels_list, COLOR_PALETTE_GREEN[:num_configs], "TF MTFa - Superimposed", global_mtfa_range, target_defocus_list)
-    st.plotly_chart(fig_mtfa_combined, use_container_width=True)
+    st.warning("Fichier Excel_PythonZ non trouvé ou vide.")
 
-    fig_tf_combined = generate_mtf_figure(filtered_dfs, labels_list, COLOR_PALETTE_CYAN[:num_configs], f"Through Focus (MTF) @ {selected_freq} LP/mm - Superimposed", global_tf_range, target_defocus_list)
-    st.plotly_chart(fig_tf_combined, use_container_width=True)
-
-    st.markdown("---")
-    col_comb_left, col_comb_right = st.columns(2)
-    with col_comb_left:
-        st.subheader("📋 VA Depth of Field (DOF)")
-        st.dataframe(df_dof_va, use_container_width=True, hide_index=True)
-    with col_comb_right:
-        st.subheader(f"📋 MTF Depth of Field (DOF @ {selected_freq} LP/mm)")
-        st.dataframe(df_dof_mtf, use_container_width=True, hide_index=True)
-
-# --------------------------------------------------------------------
-# 6. TABLEAU D'ÉNERGIE LUMINEUSE
-# --------------------------------------------------------------------
 st.markdown("---")
-st.header("💡 Light Energy Comparison (Through Focus Area)")
 
-def calculate_light_energy(df_sub, freq, d_min, d_max):
-    col_name = f"MTF_{freq}"
-    if df_sub.empty or col_name not in df_sub.columns:
-        return 0.0
-    mask = (df_sub['Defocus'] >= d_min) & (df_sub['Defocus'] <= d_max)
-    return df_sub.loc[mask, col_name].sum()
+# --- 1) GRAPHE FREQUENCY SWEEP (En dessous de Through Focus MTF) ---
+st.header("Frequency Sweep")
 
-energy_data = []
-for i in range(num_configs):
-    row = {"IOL": f"Config {chr(65+i)} ({selected_iols[i]})"}
-    for freq in available_frequencies:
-        row[f"Light Energy at {freq} LP/mm"] = round(calculate_light_energy(filtered_dfs[i], freq, defocus_min_energy, defocus_max_energy), 4)
-    energy_data.append(row)
+if df_fs is not None:
+    # 4) Filtrage selon l'IOL, l'ouverture, la lumière et la cornée
+    df_fs_filtered = df_fs[
+        (df_fs["Nom_IOL"] == selected_iol)
+        & (df_fs["Ouverture"] == str(selected_aperture))
+        & (df_fs["Condition"] == selected_light)
+        & (df_fs["Type_cornee"] == selected_cornea)
+    ]
 
-st.caption(f"Calculated by sum of MTF values for Defocus between **{defocus_min_energy:.2f} D** and **{defocus_max_energy:.2f} D**.")
-st.dataframe(pd.DataFrame(energy_data), use_container_width=True, hide_index=True)
+    # 4) Imposer la valeur max de Frequency (0 à Frequency max)
+    df_fs_filtered = df_fs_filtered[
+        (df_fs_filtered["Frequency"] >= 0)
+        & (df_fs_filtered["Frequency"] <= fs_max_freq)
+    ]
 
-# --------------------------------------------------------------------
-# 7. MIRES USAF (OPTIMISÉES AVEC CACHE ET RECHERCHE MULTI-FORMATS)
-# --------------------------------------------------------------------
-st.markdown("---")
-st.header("🖼️ USAF Targets Comparison")
+    if not df_fs_filtered.empty:
+        # Vérification si la colonne demandée ("FS at distance", "FS at 1.50D", "FS at 2.5D") existe
+        if fs_column_choice in df_fs_filtered.columns:
+            fig_fs, ax_fs = plt.subplots(figsize=(9, 4.5))
 
-def render_usaf_row(selected_iol, df_filtered, label):
-    st.subheader(f"Configuration {label} : **{selected_iol}**")
-    if df_filtered.empty:
-        st.caption("No data available to display USAF targets.")
-        return
-        
-    img_cols = st.columns(5)
-    iol_folder = IMAGES_BASE_DIR / selected_iol
+            # 4) X = Frequency, 5) Y = Colonne choisie dans le menu déroulant
+            ax_fs.plot(
+                df_fs_filtered["Frequency"],
+                df_fs_filtered[fs_column_choice],
+                marker="",
+                linestyle="-",
+                linewidth=2,
+                color="#1f77b4",
+                label=f"{fs_column_choice}",
+            )
 
-    for idx, d in enumerate(sorted_defocus_inputs):
-        with img_cols[idx]:
-            st.markdown(f"**{d:+.2f} D**")
-            
-            try:
-                pupil_val = float(selected_pupil)
-                pupil_str = f"{pupil_val:.1f}"
-            except (ValueError, TypeError):
-                pupil_str = str(selected_pupil)
+            ax_fs.set_title(f"Frequency Sweep - {fs_column_choice}")
+            ax_fs.set_xlabel("Frequency (lines/mm)")
+            ax_fs.set_ylabel("MTF / Value")
 
-            light_lower = str(selected_light).lower()
-            light_upper = str(selected_light).upper()
+            # 6) Gestion des limites de l'axe Y
+            ax_fs.set_ylim(fs_y_min, fs_y_max)
+            ax_fs.grid(True, linestyle="--", alpha=0.5)
+            ax_fs.legend()
 
-            candidates = [
-                f"{selected_iol}_{pupil_str}_{light_lower}_{selected_cornea}_defocus_{d:.2f}.jpg",
-                f"{selected_iol}_{pupil_str}_{light_upper}_{selected_cornea}_defocus_{d:.2f}.jpg",
-                f"{selected_iol}_{pupil_str}_{light_lower}_{selected_cornea}_defocus_{d:+.2f}.jpg",
-                f"{selected_iol}_{pupil_str}_{light_upper}_{selected_cornea}_defocus_{d:+.2f}.jpg",
-                f"{selected_iol}_{selected_pupil}_{light_lower}_{selected_cornea}_defocus_{d:.2f}.jpg",
-                f"{selected_iol}_{selected_pupil}_{light_upper}_{selected_cornea}_defocus_{d:.2f}.jpg",
-            ]
-            
-            img_loaded = None
-            for filename in candidates:
-                img_path = iol_folder / filename
-                img_loaded = load_image_cached(str(img_path))
-                if img_loaded:
-                    break
-            
-            if img_loaded:
-                st.image(img_loaded, use_container_width=True)
-            else:
-                st.caption("⚠️ Non trouvée")
-                st.code(f"{candidates[0]}", language="text")
-
-for i in range(num_configs):
-    render_usaf_row(selected_iols[i], filtered_dfs[i], chr(65+i))
-    st.markdown(" ")
+            st.pyplot(fig_fs)
+        else:
+            st.error(f"La colonne '{fs_column_choice}' n'a pas été trouvée dans le fichier Excel_FS.")
+    else:
+        st.warning("Aucune donnée Frequency Sweep trouvée pour ces critères.")
+else:
+    st.error("Le fichier 'Excel_FS.xlsx' est introuvable au même emplacement que l'application.")
