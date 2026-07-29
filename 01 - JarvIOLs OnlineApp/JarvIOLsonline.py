@@ -436,26 +436,44 @@ for i in range(num_configs):
 
 
 
-        # Filtrage fichier 2 (Frequency Sweep)
-
+# Filtrage fichier 2 (Frequency Sweep) - CODE BLINDÉ
         if not df_fs.empty:
+            # 1. Normalisation forcée des colonnes de filtrage pour éviter tout conflit de type ou d'espace
+            df_fs_clean = df_fs.copy()
+            
+            # Nettoyage des chaînes de caractères
+            for col in ['IOL_Model', 'Light_Condition', 'Cornea_Type']:
+                if col in df_fs_clean.columns:
+                    df_fs_clean[col] = df_fs_clean[col].astype(str).str.strip()
 
-            df_fs_f = df_fs[
+            # Normalisation de Pupil_Size en flottant (ex: '3.5' -> 3.5)
+            if 'Pupil_Size' in df_fs_clean.columns:
+                df_fs_clean['Pupil_Size'] = (
+                    df_fs_clean['Pupil_Size']
+                    .astype(str)
+                    .str.replace(',', '.', regex=False)
+                    .astype(float)
+                )
 
-                (df_fs['IOL_Model'] == iol_selected) & 
+            # Convertir aussi les variables sélectionnées en Sidebar pour correspondre parfaitement
+            target_model = str(iol_selected).strip()
+            target_pupil = float(selected_pupil)
+            target_light = str(selected_light).strip()
+            target_cornea = str(selected_cornea).strip()
 
-                (df_fs['Pupil_Size'] == selected_pupil) & 
-
-                (df_fs['Light_Condition'] == selected_light) & 
-
-                (df_fs['Cornea_Type'] == selected_cornea)
-
+            # 2. Filtrage multicritère
+            df_fs_f = df_fs_clean[
+                (df_fs_clean['IOL_Model'] == target_model) & 
+                (np.isclose(df_fs_clean['Pupil_Size'], target_pupil)) &  # Comparaison float sécurisée
+                (df_fs_clean['Light_Condition'] == target_light) & 
+                (df_fs_clean['Cornea_Type'] == target_cornea)
             ].sort_values(by='Frequency')
 
+            # --- LIGNE DE DÉBOGAGE TEMPORAIRE ---
+            st.caption(f"🔍 Résultat du filtre pour {target_model}: {len(df_fs_f)} lignes trouvées.")
+
             filtered_fs_dfs.append(df_fs_f)
-
         else:
-
             filtered_fs_dfs.append(pd.DataFrame())
 
 
