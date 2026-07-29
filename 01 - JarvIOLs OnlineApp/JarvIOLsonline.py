@@ -42,6 +42,7 @@ if not check_password():
 # --------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent
 EXCEL_PATH = BASE_DIR / "Excel_PythonZ.xlsx"
+EXCEL_FS_PATH = BASE_DIR / "Excel_FS.xlsx"  # <--- NOUVEAU PATH POUR FREQUENCY SWEEP
 IMAGES_BASE_DIR = BASE_DIR / "Images"
 
 @st.cache_data(show_spinner="Chargement des données...")
@@ -49,6 +50,13 @@ def load_iol_data(path):
     if os.path.exists(path):
         return pd.read_excel(path)
     return pd.DataFrame(columns=['IOL_Model', 'Pupil_Size', 'Light_Condition', 'Cornea_Type', 'Defocus', 'VA'])
+
+@st.cache_data(show_spinner="Chargement des données Frequency Sweep...")
+def load_fs_data(path):
+    """Mise en cache du fichier Excel_FS.xlsx."""
+    if os.path.exists(path):
+        return pd.read_excel(path)
+    return pd.DataFrame()
 
 @st.cache_data(show_spinner=False)
 def load_image_cached(img_path):
@@ -58,23 +66,37 @@ def load_image_cached(img_path):
     return None
 
 df = load_iol_data(EXCEL_PATH)
+df_fs = load_fs_data(EXCEL_FS_PATH)  # <--- CHARGEMENT DES DONNÉES FREQUENCY SWEEP
 
 if df.empty:
     st.error(f"Fichier Excel introuvable ou vide à l'emplacement : {EXCEL_PATH}")
     st.stop()
 
-# Extraction des paramètres
+# Normalisation facultative du nom de la colonne modèle si orthographiée 'IOL_Mode' dans Excel_FS
+if not df_fs.empty and 'IOL_Mode' in df_fs.columns:
+    df_fs.rename(columns={'IOL_Mode': 'IOL_Model'}, inplace=True)
+
+# Extraction des paramètres du premier fichier
 available_models = sorted(df['IOL_Model'].unique()) if not df.empty else ["Z", "Ma"]
-available_pupils = sorted(df['Pupil_Size'].unique()) if not df.empty else [3]
-available_lights = sorted(df['Light_Condition'].unique()) if not df.empty else ["gl"]
-available_corneas = sorted(df['Cornea_Type'].unique()) if not df.empty else ["ISO2", "ISO3"]
+available_pupils = sorted(df['Pupil_Size'].unique()) if not df.empty else [3.5]
+available_lights = sorted(df['Light_Condition'].unique()) if not df.empty else ["GL"]
+available_corneas = sorted(df['Cornea_Type'].unique()) if not df.empty else ["ISO MC13"]
 
 mtf_columns = [col for col in df.columns if col.startswith('MTF_')]
 available_frequencies = sorted([int(col.split('_')[1]) for col in mtf_columns]) if mtf_columns else [25]
 
+# Colonnes cibles pour le Frequency Sweep
+fs_metric_columns = ["FS at distance", "FS at 1.50D", "FS at 2.5D"]
+if not df_fs.empty:
+    # Récupération automatique si les noms diffèrent légèrement
+    found_cols = [col for col in df_fs.columns if col.startswith("FS at")]
+    if found_cols:
+        fs_metric_columns = found_cols
+
 COLOR_PALETTE = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b"]
 COLOR_PALETTE_GREEN = ["#2ca02c", "#17becf", "#9467bd", "#ff7f0e", "#bcbd22", "#8c564b"]
 COLOR_PALETTE_CYAN = ["#2BD9FE", "#e377c2", "#bcbd22", "#17becf", "#f7b6d2", "#c49c94"]
+COLOR_PALETTE_PURPLE = ["#9467bd", "#d62728", "#1f77b4", "#ff7f0e", "#2ca02c", "#8c564b"]
 
 # --------------------------------------------------------------------
 # 3. BARRE LATÉRALE : FILTRES OPTIQUES & OPTIONS
@@ -86,6 +108,14 @@ selected_cornea = st.sidebar.selectbox("Cornea model", available_corneas)
 
 selected_freq = st.sidebar.selectbox("Spatial frequencies for Through-Focus (LP/mm)", available_frequencies)
 target_mtf_column = f"MTF_{selected_freq}"
+
+# --- NOUVELLE SECTION SIDEBAR : FREQUENCY SWEEP ---
+st.sidebar.markdown("---")
+st.sidebar.header("📈 Frequency Sweep Parameters")
+selected_fs_metric = st.sidebar.selectbox(
+    "Select MTF Frequency Sweep Curve",
+    fs_metric_columns
+)
 
 st.sidebar.markdown("---")
 st.sidebar.header("⚡ Light Energy Integration Range")
@@ -164,6 +194,7 @@ st.title("📊 IOL Comparative Analysis Tool")
 main_cols = st.columns(num_configs)
 selected_iols = []
 filtered_dfs = []
+filtered_fs_dfs = []  # <--- LISTE DES DATAFRAMES FILTRÉS POUR EXCEL_FS
 
 for i in range(num_configs):
     with main_cols[i]:
@@ -177,6 +208,7 @@ for i in range(num_configs):
         )
         selected_iols.append(iol_selected)
         
+        # Filtrage fichier 1 (Through Focus & VA)
         df_f = df[
             (df['IOL_Model'] == iol_selected) & 
             (df['Pupil_Size'] == selected_pupil) & 
@@ -185,43 +217,43 @@ for i in range(num_configs):
         ].sort_values(by='Defocus')
         filtered_dfs.append(df_f)
 
+        # Filtrage fichier 2 (Frequency Sweep)
+        if not df_fs.empty:
+            df_fs_f = df_fs[
+                (df_fs['IOL_Model'] == iol_selected) & 
+                (df_fs['Pupil_Size'] == selected_pupil) & 
+                (df_fs['Light_Condition'] == selected_light) & 
+                (df_fs['Cornea_Type'] == selected_cornea)
+            ].sort_values(by='Frequency')
+            filtered_fs_dfs.append(df_fs_f)
+        else:
+            filtered_fs_dfs.append(pd.DataFrame())
+
 # Calcul des plages Y globales
 all_va_vals = []
 all_mtfa_vals = []
 all_tf_vals = []
+all_fs_vals = []
 
 for df_sub in filtered_dfs:
     if not df_sub.empty:
         if 'VA' in df_sub.columns:
             va_vals = df_sub['VA'].dropna()
             all_va_vals.extend(va_vals.tolist())
-            # MTFa = 0.085 / (VA + 0.21)
             mtfa_vals = 0.085 / (va_vals + 0.21)
             all_mtfa_vals.extend(mtfa_vals.tolist())
             
         if target_mtf_column in df_sub.columns:
             all_tf_vals.extend(df_sub[target_mtf_column].dropna().tolist())
 
-if all_va_vals:
-    b_min, b_max = min(all_va_vals), max(all_va_vals)
-    margin = (b_max - b_min) * 0.05 or 0.05
-    global_va_range = [b_min - margin, b_max + margin]
-else:
-    global_va_range = None
+for df_fs_sub in filtered_fs_dfs:
+    if not df_fs_sub.empty and selected_fs_metric in df_fs_sub.columns:
+        all_fs_vals.extend(df_fs_sub[selected_fs_metric].dropna().tolist())
 
-if all_mtfa_vals:
-    b_min, b_max = min(all_mtfa_vals), max(all_mtfa_vals)
-    margin = (b_max - b_min) * 0.05 or 0.05
-    global_mtfa_range = [b_min - margin, b_max + margin]
-else:
-    global_mtfa_range = None
-
-if all_tf_vals:
-    b_min, b_max = min(all_tf_vals), max(all_tf_vals)
-    margin = (b_max - b_min) * 0.05 or 0.05
-    global_tf_range = [b_min - margin, b_max + margin]
-else:
-    global_tf_range = None
+global_va_range = [min(all_va_vals) - 0.05, max(all_va_vals) + 0.05] if all_va_vals else None
+global_mtfa_range = [min(all_mtfa_vals) - 0.05, max(all_mtfa_vals) + 0.05] if all_mtfa_vals else None
+global_tf_range = [min(all_tf_vals) - 0.05, max(all_tf_vals) + 0.05] if all_tf_vals else None
+global_fs_range = [0, max(all_fs_vals) + 0.05] if all_fs_vals else [0, 1.0]
 
 # --------------------------------------------------------------------
 # 5. FONCTIONS DOF ET CRÉATION DES GRAPHIQUES
@@ -325,6 +357,32 @@ def generate_mtf_figure(datasets, labels, colors, title, tf_range, target_defocu
         fig.update_yaxes(range=tf_range)
     return fig
 
+# --- NOUVELLE FONCTION : GRAPHIQUE MTF FREQUENCY SWEEP ---
+def generate_fs_figure(datasets, labels, colors, title, y_column, fs_range):
+    """Génère le graphique MTF Frequency Sweep."""
+    fig = go.Figure()
+    for df_fs_sub, label, color in zip(datasets, labels, colors):
+        if not df_fs_sub.empty and 'Frequency' in df_fs_sub.columns and y_column in df_fs_sub.columns:
+            fig.add_trace(go.Scatter(
+                x=df_fs_sub['Frequency'], 
+                y=df_fs_sub[y_column], 
+                mode='lines+markers', 
+                name=label,
+                line=dict(width=2.5, color=color)
+            ))
+    fig.add_hline(y=0.1, line_width=1.5, line_dash="dot", line_color="black", opacity=0.8, annotation_text="0.1 MTF", annotation_position="top right")
+    fig.update_layout(
+        title=title, 
+        xaxis_title="Spatial Frequency (LP/mm)", 
+        yaxis_title=f"MTF ({y_column})", 
+        height=350, 
+        margin=dict(l=40, r=40, t=40, b=40), 
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    if fs_range:
+        fig.update_yaxes(range=fs_range)
+    return fig
+
 # Construction des tableaux de synthèse DOF
 dof_va_rows = []
 for i in range(num_configs):
@@ -354,6 +412,7 @@ if "1)" in comparison_mode:
     for i in range(num_configs):
         with main_cols[i]:
             df_sub = filtered_dfs[i]
+            df_fs_sub = filtered_fs_dfs[i]
             iol_name = selected_iols[i]
             conf_label = chr(65+i)
             if df_sub.empty:
@@ -363,13 +422,17 @@ if "1)" in comparison_mode:
                 fig_va = generate_va_figure([df_sub], [f"VA ({iol_name})"], [COLOR_PALETTE[i % len(COLOR_PALETTE)]], f"Visual Acuity - Config {conf_label}", global_va_range, target_defocus_list)
                 st.plotly_chart(fig_va, use_container_width=True)
                 
-                # 2. Graph TF MTFa (Placé au milieu)
+                # 2. Graph TF MTFa
                 fig_mtfa = generate_mtfa_figure([df_sub], [f"MTFa ({iol_name})"], [COLOR_PALETTE_GREEN[i % len(COLOR_PALETTE_GREEN)]], f"TF MTFa - Config {conf_label}", global_mtfa_range, target_defocus_list)
                 st.plotly_chart(fig_mtfa, use_container_width=True)
 
-                # 3. Graph MTF
+                # 3. Graph MTF Through-Focus
                 fig_tf = generate_mtf_figure([df_sub], [f"MTF ({iol_name})"], [COLOR_PALETTE_CYAN[i % len(COLOR_PALETTE_CYAN)]], f"MTF @ {selected_freq} LP/mm - Config {conf_label}", global_tf_range, target_defocus_list)
                 st.plotly_chart(fig_tf, use_container_width=True)
+
+                # 4. Graph MTF Frequency Sweep (PLACE EN DESSOUS DU THROUGH-FOCUS)
+                fig_fs = generate_fs_figure([df_fs_sub], [f"FS ({iol_name})"], [COLOR_PALETTE_PURPLE[i % len(COLOR_PALETTE_PURPLE)]], f"MTF Frequency Sweep ({selected_fs_metric}) - Config {conf_label}", selected_fs_metric, global_fs_range)
+                st.plotly_chart(fig_fs, use_container_width=True)
 
     st.markdown("### 📊 Depth of Field (DOF) Summary Tables")
     col_t1, col_t2 = st.columns(2)
@@ -392,6 +455,10 @@ else:
 
     fig_tf_combined = generate_mtf_figure(filtered_dfs, labels_list, COLOR_PALETTE_CYAN[:num_configs], f"Through Focus (MTF) @ {selected_freq} LP/mm - Superimposed", global_tf_range, target_defocus_list)
     st.plotly_chart(fig_tf_combined, use_container_width=True)
+
+    # Graphique Frequency Sweep Superposé
+    fig_fs_combined = generate_fs_figure(filtered_fs_dfs, labels_list, COLOR_PALETTE_PURPLE[:num_configs], f"MTF Frequency Sweep ({selected_fs_metric}) - Superimposed", selected_fs_metric, global_fs_range)
+    st.plotly_chart(fig_fs_combined, use_container_width=True)
 
     st.markdown("---")
     col_comb_left, col_comb_right = st.columns(2)
@@ -426,7 +493,7 @@ st.caption(f"Calculated by sum of MTF values for Defocus between **{defocus_min_
 st.dataframe(pd.DataFrame(energy_data), use_container_width=True, hide_index=True)
 
 # --------------------------------------------------------------------
-# 7. MIRES USAF (OPTIMISÉES AVEC CACHE ET RECHERCHE MULTI-FORMATS)
+# 7. MIRES USAF
 # --------------------------------------------------------------------
 st.markdown("---")
 st.header("🖼️ USAF Targets Comparison")
