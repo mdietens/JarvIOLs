@@ -418,10 +418,9 @@ for i in range(num_configs):
 
         # Filtrage fichier 2 (Frequency Sweep)
         if not df_fs.empty:
-            # Nettoyage préventif des espaces texte et filtres
             df_fs_clean = df_fs.copy()
             
-            # --- DEBUG FILTRAGE PAS À PAS POUR CETTE CONFIG ---
+            # --- DEBUG FILTRAGE PAS À PAS ---
             with st.sidebar.expander(f"🕵️ Filtres Config {chr(65+i)} ({iol_selected})", expanded=False):
                 m_iol = df_fs_clean['IOL_Model'] == iol_selected
                 m_pupil = df_fs_clean['Pupil_Size'] == selected_pupil
@@ -446,13 +445,38 @@ for i in range(num_configs):
                 (df_fs_clean['Cornea_Type'] == selected_cornea)
             ]
             
-            # Sécurité si la colonne 'Frequency' existe avant le tri
             if 'Frequency' in df_fs_f.columns:
                 df_fs_f = df_fs_f.sort_values(by='Frequency')
             
             filtered_fs_dfs.append(df_fs_f)
         else:
             filtered_fs_dfs.append(pd.DataFrame())
+
+# --- CALCUL DES PLAGES Y GLOBALES (REQUIS POUR LES GRAPHIQUES) ---
+all_va_vals = []
+all_mtfa_vals = []
+all_tf_vals = []
+all_fs_vals = []
+
+for df_sub in filtered_dfs:
+    if not df_sub.empty:
+        if 'VA' in df_sub.columns:
+            va_vals = df_sub['VA'].dropna()
+            all_va_vals.extend(va_vals.tolist())
+            mtfa_vals = 0.085 / (va_vals + 0.21)
+            all_mtfa_vals.extend(mtfa_vals.tolist())
+            
+        if target_mtf_column in df_sub.columns:
+            all_tf_vals.extend(df_sub[target_mtf_column].dropna().tolist())
+
+for df_fs_sub in filtered_fs_dfs:
+    if not df_fs_sub.empty and selected_fs_metric in df_fs_sub.columns:
+        all_fs_vals.extend(df_fs_sub[selected_fs_metric].dropna().tolist())
+
+global_va_range = [min(all_va_vals) - 0.05, max(all_va_vals) + 0.05] if all_va_vals else None
+global_mtfa_range = [min(all_mtfa_vals) - 0.05, max(all_mtfa_vals) + 0.05] if all_mtfa_vals else None
+global_tf_range = [min(all_tf_vals) - 0.05, max(all_tf_vals) + 0.05] if all_tf_vals else None
+global_fs_range = [0, max(all_fs_vals) + 0.05] if all_fs_vals else [0, 1.0]
 
 
 
