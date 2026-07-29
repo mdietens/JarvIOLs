@@ -161,22 +161,32 @@ comparison_mode = st.sidebar.radio(
 )
 
 st.sidebar.markdown("---")
-st.sidebar.header("🖼️ Selection of Defocus for USAF Targets (-1 to 5 D)")
+st.sidebar.header("🖼️ Selection of Defocus for USAF Targets")
+
+# 1. Liste stricte des valeurs autorisées (extraites de l'image)
+ALLOWED_DEFOCUS_VALUES = [
+    -0.34, -0.17, 0.00, 0.17, 0.34, 0.51, 0.68, 0.86, 1.03, 
+    1.25, 1.37, 1.50, 1.71, 1.88, 2.00, 2.23, 2.40, 2.50, 
+    2.74, 2.91, 3.08, 3.25, 3.42
+]
+
+# 2. Valeurs par défaut pour D1 à D5 (ajustées selon votre liste)
+default_defocus = [-0.34, 0.00, 0.86, 1.37, 2.50]
+
 defocus_inputs = []
 cols_defocus = st.sidebar.columns(5)
-default_defocus = [-0.5, 0.0, 1.0, 2.0, 3.0]
 
 for i in range(5):
     with cols_defocus[i]:
-        val = st.number_input(
-            f"D{i+1}", 
-            min_value=-1.0, 
-            max_value=5.0, 
-            value=float(default_defocus[i]), 
-            step=0.1, 
-            format="%.2f"
+        # Utilisation de selectbox pour forcer le choix dans la liste
+        val = st.selectbox(
+            f"D{i+1}",
+            options=ALLOWED_DEFOCUS_VALUES,
+            index=ALLOWED_DEFOCUS_VALUES.index(default_defocus[i]),
+            format_func=lambda x: f"{x:.2f}",
+            key=f"usaf_defocus_{i}"
         )
-        defocus_inputs.append(round(val, 2))
+        defocus_inputs.append(val)
 
 sorted_defocus_inputs = sorted(defocus_inputs)
 
