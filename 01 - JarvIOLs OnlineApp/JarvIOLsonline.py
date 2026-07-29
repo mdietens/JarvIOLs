@@ -375,140 +375,84 @@ if st.sidebar.button("🚪 Déconnexion"):
 
 
 # --------------------------------------------------------------------
-
 # 4. INTERFACE PRINCIPALE & FILTRAGE DES DONNÉES
-
 # --------------------------------------------------------------------
-
 st.title("📊 IOL Comparative Analysis Tool")
 
-
-
 main_cols = st.columns(num_configs)
-
 selected_iols = []
-
 filtered_dfs = []
-
 filtered_fs_dfs = []  # <--- LISTE DES DATAFRAMES FILTRÉS POUR EXCEL_FS
 
-
+# --- MODULE DE DIAGNOSTIC ET DE DEBUG (FICHIER 2) ---
+with st.sidebar.expander("🔍 Diagnostic / Debug Excel_FS", expanded=False):
+    st.markdown("**État du fichier Excel_FS :**")
+    if df_fs.empty:
+        st.error("⚠️ `df_fs` est totalement vide ou introuvable !")
+    else:
+        st.success(f"✅ `df_fs` chargé ({len(df_fs)} lignes)")
+        st.write("**Colonnes détectées dans df_fs :**", df_fs.columns.tolist())
+        st.write("**Types de données (dtypes) :**")
+        st.json({col: str(dtype) for col, dtype in df_fs.dtypes.items()})
 
 for i in range(num_configs):
-
     with main_cols[i]:
-
         st.header(f"Config {chr(65+i)}")
-
         default_idx = min(i, len(available_models) - 1)
-
         iol_selected = st.selectbox(
-
             f"Choose IOL ({chr(65+i)})", 
-
             available_models, 
-
             index=default_idx, 
-
             key=f"select_iol_{i}"
-
         )
-
         selected_iols.append(iol_selected)
-
         
-
         # Filtrage fichier 1 (Through Focus & VA)
-
         df_f = df[
-
             (df['IOL_Model'] == iol_selected) & 
-
             (df['Pupil_Size'] == selected_pupil) & 
-
             (df['Light_Condition'] == selected_light) & 
-
             (df['Cornea_Type'] == selected_cornea)
-
         ].sort_values(by='Defocus')
-
         filtered_dfs.append(df_f)
 
-
-
         # Filtrage fichier 2 (Frequency Sweep)
-
         if not df_fs.empty:
-
-            df_fs_f = df_fs[
-
-                (df_fs['IOL_Model'] == iol_selected) & 
-
-                (df_fs['Pupil_Size'] == selected_pupil) & 
-
-                (df_fs['Light_Condition'] == selected_light) & 
-
-                (df_fs['Cornea_Type'] == selected_cornea)
-
-            ].sort_values(by='Frequency')
-
-            filtered_fs_dfs.append(df_fs_f)
-
-        else:
-
-            filtered_fs_dfs.append(pd.DataFrame())
-
-
-
-# Calcul des plages Y globales
-
-all_va_vals = []
-
-all_mtfa_vals = []
-
-all_tf_vals = []
-
-all_fs_vals = []
-
-
-
-for df_sub in filtered_dfs:
-
-    if not df_sub.empty:
-
-        if 'VA' in df_sub.columns:
-
-            va_vals = df_sub['VA'].dropna()
-
-            all_va_vals.extend(va_vals.tolist())
-
-            mtfa_vals = 0.085 / (va_vals + 0.21)
-
-            all_mtfa_vals.extend(mtfa_vals.tolist())
-
+            # Nettoyage préventif des espaces texte et filtres
+            df_fs_clean = df_fs.copy()
             
+            # --- DEBUG FILTRAGE PAS À PAS POUR CETTE CONFIG ---
+            with st.sidebar.expander(f"🕵️ Filtres Config {chr(65+i)} ({iol_selected})", expanded=False):
+                m_iol = df_fs_clean['IOL_Model'] == iol_selected
+                m_pupil = df_fs_clean['Pupil_Size'] == selected_pupil
+                m_light = df_fs_clean['Light_Condition'] == selected_light
+                m_cornea = df_fs_clean['Cornea_Type'] == selected_cornea
+                
+                st.write(f"- Match IOL (`{iol_selected}`) :", int(m_iol.sum()))
+                st.write(f"- Match Pupil (`{selected_pupil}`) :", int(m_pupil.sum()))
+                st.write(f"- Match Light (`{selected_light}`) :", int(m_light.sum()))
+                st.write(f"- Match Cornea (`{selected_cornea}`) :", int(m_cornea.sum()))
+                
+                total_match = (m_iol & m_pupil & m_light & m_cornea).sum()
+                if total_match == 0:
+                    st.error("❌ 0 ligne correspondante après application des 4 filtres.")
+                else:
+                    st.success(f"✅ {total_match} lignes trouvées.")
 
-        if target_mtf_column in df_sub.columns:
-
-            all_tf_vals.extend(df_sub[target_mtf_column].dropna().tolist())
-
-
-
-for df_fs_sub in filtered_fs_dfs:
-
-    if not df_fs_sub.empty and selected_fs_metric in df_fs_sub.columns:
-
-        all_fs_vals.extend(df_fs_sub[selected_fs_metric].dropna().tolist())
-
-
-
-global_va_range = [min(all_va_vals) - 0.05, max(all_va_vals) + 0.05] if all_va_vals else None
-
-global_mtfa_range = [min(all_mtfa_vals) - 0.05, max(all_mtfa_vals) + 0.05] if all_mtfa_vals else None
-
-global_tf_range = [min(all_tf_vals) - 0.05, max(all_tf_vals) + 0.05] if all_tf_vals else None
-
-global_fs_range = [0, max(all_fs_vals) + 0.05] if all_fs_vals else [0, 1.0]
+            df_fs_f = df_fs_clean[
+                (df_fs_clean['IOL_Model'] == iol_selected) & 
+                (df_fs_clean['Pupil_Size'] == selected_pupil) & 
+                (df_fs_clean['Light_Condition'] == selected_light) & 
+                (df_fs_clean['Cornea_Type'] == selected_cornea)
+            ]
+            
+            # Sécurité si la colonne 'Frequency' existe avant le tri
+            if 'Frequency' in df_fs_f.columns:
+                df_fs_f = df_fs_f.sort_values(by='Frequency')
+            
+            filtered_fs_dfs.append(df_fs_f)
+        else:
+            filtered_fs_dfs.append(pd.DataFrame())
 
 
 
