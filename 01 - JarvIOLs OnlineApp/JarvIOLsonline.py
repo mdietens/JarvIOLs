@@ -400,6 +400,7 @@ def generate_mtf_figure(datasets, labels, colors, title, tf_range, target_defocu
     return fig
 
 # --- FONCTION GRAPHIQUE MTF FREQUENCY SWEEP MODIFIÉE ---
+# --- FONCTION GRAPHIQUE MTF FREQUENCY SWEEP MODIFIÉE ---
 def generate_fs_figure(datasets, labels, colors, title, y_column, fs_range, max_freq=100):
     """Génère le graphique MTF Frequency Sweep avec axe X dynamique."""
     fig = go.Figure()
@@ -417,16 +418,7 @@ def generate_fs_figure(datasets, labels, colors, title, y_column, fs_range, max_
                 line=dict(width=2.5, color=color)
             ))
 
-    # Ligne de référence à 0.1 MTF
-    fig.add_hline(
-        y=0.1, 
-        line_width=1.5, 
-        line_dash="dot", 
-        line_color="black", 
-        opacity=0.8, 
-        annotation_text="0.1 MTF", 
-        annotation_position="top right"
-    )
+    # --- La ligne horizontale fig.add_hline(y=0.1, ...) a été retirée d'ici ---
 
     y_limits = fs_range if (fs_range and len(fs_range) == 2) else [0, 1]
 
@@ -436,9 +428,16 @@ def generate_fs_figure(datasets, labels, colors, title, y_column, fs_range, max_
         yaxis_title=f"MTF ({y_column})", 
         height=350, 
         margin=dict(l=40, r=40, t=40, b=40), 
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        showlegend=True,  # <--- FORCE L'AFFICHAGE DE LA LÉGENDE
+        legend=dict(
+            orientation="h", 
+            yanchor="bottom", 
+            y=1.02, 
+            xanchor="right", 
+            x=1
+        ),
         xaxis=dict(
-            range=[0, max_freq], # <--- AXE X DYNAMIQUE
+            range=[0, max_freq],
             zeroline=False, 
             showgrid=True
         ),
