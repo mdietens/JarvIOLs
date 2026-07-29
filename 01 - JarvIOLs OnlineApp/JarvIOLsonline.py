@@ -436,44 +436,26 @@ for i in range(num_configs):
 
 
 
-# Filtrage fichier 2 (Frequency Sweep) - CODE BLINDÉ
+        # Filtrage fichier 2 (Frequency Sweep)
+
         if not df_fs.empty:
-            # 1. Normalisation forcée des colonnes de filtrage pour éviter tout conflit de type ou d'espace
-            df_fs_clean = df_fs.copy()
-            
-            # Nettoyage des chaînes de caractères
-            for col in ['IOL_Model', 'Light_Condition', 'Cornea_Type']:
-                if col in df_fs_clean.columns:
-                    df_fs_clean[col] = df_fs_clean[col].astype(str).str.strip()
 
-            # Normalisation de Pupil_Size en flottant (ex: '3.5' -> 3.5)
-            if 'Pupil_Size' in df_fs_clean.columns:
-                df_fs_clean['Pupil_Size'] = (
-                    df_fs_clean['Pupil_Size']
-                    .astype(str)
-                    .str.replace(',', '.', regex=False)
-                    .astype(float)
-                )
+            df_fs_f = df_fs[
 
-            # Convertir aussi les variables sélectionnées en Sidebar pour correspondre parfaitement
-            target_model = str(iol_selected).strip()
-            target_pupil = float(selected_pupil)
-            target_light = str(selected_light).strip()
-            target_cornea = str(selected_cornea).strip()
+                (df_fs['IOL_Model'] == iol_selected) & 
 
-            # 2. Filtrage multicritère
-            df_fs_f = df_fs_clean[
-                (df_fs_clean['IOL_Model'] == target_model) & 
-                (np.isclose(df_fs_clean['Pupil_Size'], target_pupil)) &  # Comparaison float sécurisée
-                (df_fs_clean['Light_Condition'] == target_light) & 
-                (df_fs_clean['Cornea_Type'] == target_cornea)
+                (df_fs['Pupil_Size'] == selected_pupil) & 
+
+                (df_fs['Light_Condition'] == selected_light) & 
+
+                (df_fs['Cornea_Type'] == selected_cornea)
+
             ].sort_values(by='Frequency')
 
-            # --- LIGNE DE DÉBOGAGE TEMPORAIRE ---
-            st.caption(f"🔍 Résultat du filtre pour {target_model}: {len(df_fs_f)} lignes trouvées.")
-
             filtered_fs_dfs.append(df_fs_f)
+
         else:
+
             filtered_fs_dfs.append(pd.DataFrame())
 
 
@@ -737,107 +719,56 @@ def generate_mtf_figure(datasets, labels, colors, title, tf_range, target_defocu
 # --- NOUVELLE FONCTION : GRAPHIQUE MTF FREQUENCY SWEEP ---
 
 def generate_fs_figure(datasets, labels, colors, title, y_column, fs_range):
-
     """Génère le graphique MTF Frequency Sweep."""
-
     fig = go.Figure()
-
     
-
     for df_fs_sub, label, color in zip(datasets, labels, colors):
-
         if not df_fs_sub.empty and 'Frequency' in df_fs_sub.columns and y_column in df_fs_sub.columns:
-
             # Conversion numérique explicite pour garantir le tracé des données
-
             x_data = pd.to_numeric(df_fs_sub['Frequency'], errors='coerce')
-
             y_data = pd.to_numeric(df_fs_sub[y_column], errors='coerce')
 
-
-
             fig.add_trace(go.Scatter(
-
                 x=x_data, 
-
                 y=y_data, 
-
                 mode='lines+markers', 
-
                 name=label,
-
                 line=dict(width=2.5, color=color)
-
             ))
 
-
-
     # Ligne de référence à 0.1 MTF
-
     fig.add_hline(
-
         y=0.1, 
-
         line_width=1.5, 
-
         line_dash="dot", 
-
         line_color="black", 
-
         opacity=0.8, 
-
         annotation_text="0.1 MTF", 
-
         annotation_position="top right"
-
     )
-
-
 
     # Plage d'axe Y : de 0 à 1 par défaut (ou fs_range s'il est spécifié)
-
     y_limits = fs_range if (fs_range and len(fs_range) == 2) else [0, 1]
 
-
-
     fig.update_layout(
-
         title=title, 
-
         xaxis_title="Spatial Frequency (LP/mm)", 
-
         yaxis_title=f"MTF ({y_column})", 
-
         height=350, 
-
         margin=dict(l=40, r=40, t=40, b=40), 
-
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-
         xaxis=dict(
-
             range=[0, 600],     # Axe X forcé de 0 à 600
-
             zeroline=False,     # Supprime la droite verticale à X=0
-
             showgrid=True
-
         ),
-
         yaxis=dict(
-
             range=y_limits,     # Axe Y forcé de 0 à 1
-
             zeroline=False,     # Supprime la droite horizontale à Y=0
-
             showgrid=True
-
         )
-
     )
-
     
-
     return fig
 
 
