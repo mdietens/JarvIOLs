@@ -159,6 +159,17 @@ with col_z:
 target_defocus_list = [defocus_target_x, defocus_target_y, defocus_target_z]
 
 st.sidebar.markdown("---")
+st.sidebar.header("🎨 Display Options")
+
+# AJOUT : Sélecteur global de taille de police pour tous les graphiques
+chart_font_size = st.sidebar.selectbox(
+    "Taille de police des graphiques (pt)",
+    options=[10, 12, 14, 16, 18, 20, 22, 24],
+    index=2,  # 14pt par défaut
+    key="global_chart_font_size"
+)
+
+st.sidebar.markdown("---")
 st.sidebar.header("⚙️ Comparison Mode")
 comparison_mode = st.sidebar.radio(
     "Choose visualization:",
@@ -241,15 +252,21 @@ for i in range(num_configs):
         )
         selected_iols.append(iol_selected)
         
-        # SÉLECTEUR DE COULEUR POUR LA CONFIGURATION
-        default_color = DEFAULT_COLORS[i % len(DEFAULT_COLORS)]
-        config_color = st.color_picker(
-            f"Color for Config {chr(65+i)}", 
-            value=default_color, 
-            key=f"color_config_{i}"
-        )
-        selected_colors.append(config_color)
-        
+        # SÉLECTEURS POUR LA CONFIGURATION (Couleur + option alternative de taille si besoin)
+        col_c1, col_c2 = st.columns([1, 1])
+        with col_c1:
+            default_color = DEFAULT_COLORS[i % len(DEFAULT_COLORS)]
+            config_color = st.color_picker(
+                f"Color Config {chr(65+i)}", 
+                value=default_color, 
+                key=f"color_config_{i}"
+            )
+            selected_colors.append(config_color)
+            
+        with col_c2:
+            st.caption("Font Size synced")
+            st.markdown(f"**{chart_font_size} pt**")
+
         # Filtrage fichier 1
         df_f = df[
             (df['IOL_Model'] == iol_selected) & 
@@ -301,7 +318,7 @@ global_tf_range = [min(all_tf_vals) - 0.05, max(all_tf_vals) + 0.05] if all_tf_v
 global_fs_range = [0, max(all_fs_vals) + 0.05] if all_fs_vals else [0, 1.0]
 
 # --------------------------------------------------------------------
-# 5. FONCTIONS DOF ET CRÉATION DES GRAPHIQUES
+# 5. FONCTIONS DOF ET CRÉATION DES GRAPHIQUES (AVEC GESTION FONT_SIZE)
 # --------------------------------------------------------------------
 def calculate_dof_va(df_sub, target_threshold):
     if df_sub.empty or 'VA' not in df_sub.columns or 'Defocus' not in df_sub.columns:
@@ -335,7 +352,7 @@ def calculate_dof_mtf(df_sub, target_mtf_col, target_threshold=0.1):
             break
     return round(abs(last_valid_defocus - best_defocus), 2)
 
-def generate_va_figure(datasets, labels, colors, title, va_range, target_defocus):
+def generate_va_figure(datasets, labels, colors, title, va_range, target_defocus, font_size=14):
     fig = go.Figure()
     for df_sub, label, color in zip(datasets, labels, colors):
         if not df_sub.empty and 'VA' in df_sub.columns:
@@ -352,14 +369,22 @@ def generate_va_figure(datasets, labels, colors, title, va_range, target_defocus
         )
     fig.add_hline(y=0.1, line_width=1.5, line_dash="dot", line_color="black", opacity=0.8, annotation_text="0.1 LogMAR", annotation_position="bottom right")
     fig.add_hline(y=0.2, line_width=1.5, line_dash="dot", line_color="black", opacity=0.8, annotation_text="0.2 LogMAR", annotation_position="bottom right")
-    fig.update_layout(title=title, xaxis_title="Defocus (D)", yaxis_title="VA (LogMAR)", height=350, margin=dict(l=40, r=40, t=40, b=40), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+    fig.update_layout(
+        title=title, 
+        xaxis_title="Defocus (D)", 
+        yaxis_title="VA (LogMAR)", 
+        height=350, 
+        margin=dict(l=40, r=40, t=40, b=40), 
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        font=dict(size=font_size)  # Mise à jour globale des tailles de police
+    )
     if va_range:
         fig.update_yaxes(range=[va_range[1], va_range[0]])
     else:
         fig.update_yaxes(autorange="reversed")
     return fig
 
-def generate_mtfa_figure(datasets, labels, colors, title, mtfa_range, target_defocus):
+def generate_mtfa_figure(datasets, labels, colors, title, mtfa_range, target_defocus, font_size=14):
     fig = go.Figure()
     for df_sub, label, color in zip(datasets, labels, colors):
         if not df_sub.empty and 'VA' in df_sub.columns:
@@ -375,12 +400,20 @@ def generate_mtfa_figure(datasets, labels, colors, title, mtfa_range, target_def
             annotation_text=f"D={d:.2f}D",
             annotation_position="top left" if idx == 0 else "top right"
         )
-    fig.update_layout(title=title, xaxis_title="Defocus (D)", yaxis_title="MTFa", height=350, margin=dict(l=40, r=40, t=40, b=40), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+    fig.update_layout(
+        title=title, 
+        xaxis_title="Defocus (D)", 
+        yaxis_title="MTFa", 
+        height=350, 
+        margin=dict(l=40, r=40, t=40, b=40), 
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        font=dict(size=font_size)  # Mise à jour globale des tailles de police
+    )
     if mtfa_range:
         fig.update_yaxes(range=mtfa_range)
     return fig
 
-def generate_mtf_figure(datasets, labels, colors, title, tf_range, target_defocus):
+def generate_mtf_figure(datasets, labels, colors, title, tf_range, target_defocus, font_size=14):
     fig = go.Figure()
     for df_sub, label, color in zip(datasets, labels, colors):
         if not df_sub.empty:
@@ -397,12 +430,20 @@ def generate_mtf_figure(datasets, labels, colors, title, tf_range, target_defocu
             annotation_position="top left" if idx == 0 else "top right"
         )
     fig.add_hline(y=0.1, line_width=1.5, line_dash="dot", line_color="black", opacity=0.8, annotation_text="0.1 MTF", annotation_position="top right")
-    fig.update_layout(title=title, xaxis_title="Defocus (D)", yaxis_title="MTF Value", height=350, margin=dict(l=40, r=40, t=40, b=40), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+    fig.update_layout(
+        title=title, 
+        xaxis_title="Defocus (D)", 
+        yaxis_title="MTF Value", 
+        height=350, 
+        margin=dict(l=40, r=40, t=40, b=40), 
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        font=dict(size=font_size)  # Mise à jour globale des tailles de police
+    )
     if tf_range:
         fig.update_yaxes(range=tf_range)
     return fig
 
-def generate_fs_figure(datasets, labels, colors, title, y_column, fs_range, max_freq=100):
+def generate_fs_figure(datasets, labels, colors, title, y_column, fs_range, max_freq=100, font_size=14):
     fig = go.Figure()
     
     for df_fs_sub, label, color in zip(datasets, labels, colors):
@@ -443,7 +484,8 @@ def generate_fs_figure(datasets, labels, colors, title, y_column, fs_range, max_
             range=y_limits, 
             zeroline=False, 
             showgrid=True
-        )
+        ),
+        font=dict(size=font_size)  # Mise à jour globale des tailles de police
     )
     
     return fig
@@ -486,15 +528,15 @@ if "1)" in comparison_mode:
                 st.warning(f"No data for {iol_name}.")
             else:
                 # 1. Graph VA
-                fig_va = generate_va_figure([df_sub], [f"VA ({iol_name})"], [color], f"Visual Acuity - Config {conf_label}", global_va_range, target_defocus_list)
+                fig_va = generate_va_figure([df_sub], [f"VA ({iol_name})"], [color], f"Visual Acuity - Config {conf_label}", global_va_range, target_defocus_list, font_size=chart_font_size)
                 st.plotly_chart(fig_va, use_container_width=True)
                 
                 # 2. Graph TF MTFa
-                fig_mtfa = generate_mtfa_figure([df_sub], [f"MTFa ({iol_name})"], [color], f"TF MTFa - Config {conf_label}", global_mtfa_range, target_defocus_list)
+                fig_mtfa = generate_mtfa_figure([df_sub], [f"MTFa ({iol_name})"], [color], f"TF MTFa - Config {conf_label}", global_mtfa_range, target_defocus_list, font_size=chart_font_size)
                 st.plotly_chart(fig_mtfa, use_container_width=True)
 
                 # 3. Graph MTF Through-Focus
-                fig_tf = generate_mtf_figure([df_sub], [f"MTF ({iol_name})"], [color], f"MTF @ {selected_freq} LP/mm - Config {conf_label}", global_tf_range, target_defocus_list)
+                fig_tf = generate_mtf_figure([df_sub], [f"MTF ({iol_name})"], [color], f"MTF @ {selected_freq} LP/mm - Config {conf_label}", global_tf_range, target_defocus_list, font_size=chart_font_size)
                 st.plotly_chart(fig_tf, use_container_width=True)
 
                 # 4. Graph MTF Frequency Sweep
@@ -505,7 +547,8 @@ if "1)" in comparison_mode:
                     f"MTF Frequency Sweep ({selected_fs_metric}) - Config {conf_label}", 
                     selected_fs_metric, 
                     global_fs_range,
-                    max_freq=max_freq_x
+                    max_freq=max_freq_x,
+                    font_size=chart_font_size
                 )
                 st.plotly_chart(fig_fs, use_container_width=True)
 
@@ -521,14 +564,14 @@ else:
     st.markdown("### Combined Metrics Comparison")
     labels_list = [f"{chr(65+i)}: {selected_iols[i]}" for i in range(num_configs)]
     
-    # Mode Superposé utilisant la palette de couleurs sélectionnée
-    fig_va_combined = generate_va_figure(filtered_dfs, labels_list, selected_colors, "Visual Acuity (VA) - Superimposed", global_va_range, target_defocus_list)
+    # Mode Superposé utilisant la palette de couleurs et la taille de police dynamique
+    fig_va_combined = generate_va_figure(filtered_dfs, labels_list, selected_colors, "Visual Acuity (VA) - Superimposed", global_va_range, target_defocus_list, font_size=chart_font_size)
     st.plotly_chart(fig_va_combined, use_container_width=True)
     
-    fig_mtfa_combined = generate_mtfa_figure(filtered_dfs, labels_list, selected_colors, "TF MTFa - Superimposed", global_mtfa_range, target_defocus_list)
+    fig_mtfa_combined = generate_mtfa_figure(filtered_dfs, labels_list, selected_colors, "TF MTFa - Superimposed", global_mtfa_range, target_defocus_list, font_size=chart_font_size)
     st.plotly_chart(fig_mtfa_combined, use_container_width=True)
 
-    fig_tf_combined = generate_mtf_figure(filtered_dfs, labels_list, selected_colors, f"Through Focus (MTF) @ {selected_freq} LP/mm - Superimposed", global_tf_range, target_defocus_list)
+    fig_tf_combined = generate_mtf_figure(filtered_dfs, labels_list, selected_colors, f"Through Focus (MTF) @ {selected_freq} LP/mm - Superimposed", global_tf_range, target_defocus_list, font_size=chart_font_size)
     st.plotly_chart(fig_tf_combined, use_container_width=True)
 
     fig_fs_combined = generate_fs_figure(
@@ -538,7 +581,8 @@ else:
         f"MTF Frequency Sweep ({selected_fs_metric}) - Superimposed", 
         selected_fs_metric, 
         global_fs_range,
-        max_freq=max_freq_x
+        max_freq=max_freq_x,
+        font_size=chart_font_size
     )
     st.plotly_chart(fig_fs_combined, use_container_width=True)
 
