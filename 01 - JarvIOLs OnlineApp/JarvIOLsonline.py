@@ -42,7 +42,7 @@ if not check_password():
 # --------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent
 EXCEL_PATH = BASE_DIR / "Excel_PythonZ.xlsx"
-EXCEL_FS_PATH = BASE_DIR / "Excel_FS.xlsx"  # <--- PATH POUR FREQUENCY SWEEP
+EXCEL_FS_PATH = BASE_DIR / "Excel_FS.xlsx"
 IMAGES_BASE_DIR = BASE_DIR / "Images"
 
 @st.cache_data(show_spinner="Chargement des données...")
@@ -92,10 +92,19 @@ if not df_fs.empty:
     if found_cols:
         fs_metric_columns = found_cols
 
-COLOR_PALETTE = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b"]
-COLOR_PALETTE_GREEN = ["#2ca02c", "#17becf", "#9467bd", "#ff7f0e", "#bcbd22", "#8c564b"]
-COLOR_PALETTE_CYAN = ["#2BD9FE", "#e377c2", "#bcbd22", "#17becf", "#f7b6d2", "#c49c94"]
-COLOR_PALETTE_PURPLE = ["#9467bd", "#d62728", "#1f77b4", "#ff7f0e", "#2ca02c", "#8c564b"]
+# PALETTE DE COULEURS PAR DÉFAUT (10 COULEURS BIEN DISTINCTES)
+DEFAULT_COLORS = [
+    "#1f77b4",  # Bleu
+    "#ff7f0e",  # Orange
+    "#2ca02c",  # Vert
+    "#d62728",  # Rouge
+    "#9467bd",  # Violet
+    "#8c564b",  # Marron
+    "#e377c2",  # Rose
+    "#7f7f7f",  # Gris
+    "#bcbd22",  # Jaune Olive
+    "#17becf"   # Cyan
+]
 
 # --------------------------------------------------------------------
 # 3. BARRE LATÉRALE : FILTRES OPTIQUES & OPTIONS
@@ -108,7 +117,7 @@ selected_cornea = st.sidebar.selectbox("Cornea model", available_corneas)
 selected_freq = st.sidebar.selectbox("Spatial frequencies for Through-Focus (LP/mm)", available_frequencies)
 target_mtf_column = f"MTF_{selected_freq}"
 
-# --- NOUVELLE SECTION SIDEBAR : FREQUENCY SWEEP ---
+# --- FREQUENCY SWEEP ---
 st.sidebar.markdown("---")
 st.sidebar.header("📈 Frequency Sweep Parameters")
 selected_fs_metric = st.sidebar.selectbox(
@@ -116,7 +125,6 @@ selected_fs_metric = st.sidebar.selectbox(
     fs_metric_columns
 )
 
-# CHAMP AJOUTÉ : Limite max de fréquence spatiale sur l'axe X (1 à 600, défaut: 100)
 max_freq_x = st.sidebar.number_input(
     "Max Spatial Frequency (LP/mm)",
     min_value=1,
@@ -163,22 +171,18 @@ comparison_mode = st.sidebar.radio(
 st.sidebar.markdown("---")
 st.sidebar.header("🖼️ Selection of Defocus for USAF Targets")
 
-# 1. Liste stricte des valeurs autorisées (extraites de l'image)
 ALLOWED_DEFOCUS_VALUES = [
     -0.34, -0.17, 0.00, 0.17, 0.34, 0.51, 0.68, 0.86, 1.03, 
     1.25, 1.37, 1.50, 1.71, 1.88, 2.00, 2.23, 2.40, 2.50, 
     2.74, 2.91, 3.08, 3.25, 3.42
 ]
 
-# 2. Valeurs par défaut pour D1 à D5 (ajustées selon votre liste)
 default_defocus = [-0.34, 0.00, 0.86, 1.37, 2.50]
-
 defocus_inputs = []
 cols_defocus = st.sidebar.columns(5)
 
 for i in range(5):
     with cols_defocus[i]:
-        # Utilisation de selectbox pour forcer le choix dans la liste
         val = st.selectbox(
             f"D{i+1}",
             options=ALLOWED_DEFOCUS_VALUES,
@@ -211,10 +215,11 @@ st.title("📊 IOL Comparative Analysis Tool")
 
 main_cols = st.columns(num_configs)
 selected_iols = []
+selected_colors = []
 filtered_dfs = []
 filtered_fs_dfs = []
 
-# --- MODULE DE DIAGNOSTIC ET DE DEBUG (FICHIER 2) ---
+# Module Debug
 with st.sidebar.expander("🔍 Diagnostic / Debug Excel_FS", expanded=False):
     st.markdown("**État du fichier Excel_FS :**")
     if df_fs.empty:
@@ -222,9 +227,8 @@ with st.sidebar.expander("🔍 Diagnostic / Debug Excel_FS", expanded=False):
     else:
         st.success(f"✅ `df_fs` chargé ({len(df_fs)} lignes)")
         st.write("**Colonnes détectées dans df_fs :**", df_fs.columns.tolist())
-        st.write("**Types de données (dtypes) :**")
-        st.json({col: str(dtype) for col, dtype in df_fs.dtypes.items()})
 
+# SÉLECTION DES MODÈLES ET DES COULEURS
 for i in range(num_configs):
     with main_cols[i]:
         st.header(f"Config {chr(65+i)}")
@@ -237,7 +241,16 @@ for i in range(num_configs):
         )
         selected_iols.append(iol_selected)
         
-        # Filtrage fichier 1 (Through Focus & VA)
+        # SÉLECTEUR DE COULEUR POUR LA CONFIGURATION
+        default_color = DEFAULT_COLORS[i % len(DEFAULT_COLORS)]
+        config_color = st.color_picker(
+            f"Color for Config {chr(65+i)}", 
+            value=default_color, 
+            key=f"color_config_{i}"
+        )
+        selected_colors.append(config_color)
+        
+        # Filtrage fichier 1
         df_f = df[
             (df['IOL_Model'] == iol_selected) & 
             (df['Pupil_Size'] == selected_pupil) & 
@@ -246,42 +259,22 @@ for i in range(num_configs):
         ].sort_values(by='Defocus')
         filtered_dfs.append(df_f)
 
-        # Filtrage fichier 2 (Frequency Sweep)
+        # Filtrage fichier 2
         if not df_fs.empty:
             df_fs_clean = df_fs.copy()
-            
-            with st.sidebar.expander(f"🕵️ Filtres Config {chr(65+i)} ({iol_selected})", expanded=False):
-                m_iol = df_fs_clean['IOL_Model'] == iol_selected
-                m_pupil = df_fs_clean['Pupil_Size'] == selected_pupil
-                m_light = df_fs_clean['Light_Condition'] == selected_light
-                m_cornea = df_fs_clean['Cornea_Type'] == selected_cornea
-                
-                st.write(f"- Match IOL (`{iol_selected}`) :", int(m_iol.sum()))
-                st.write(f"- Match Pupil (`{selected_pupil}`) :", int(m_pupil.sum()))
-                st.write(f"- Match Light (`{selected_light}`) :", int(m_light.sum()))
-                st.write(f"- Match Cornea (`{selected_cornea}`) :", int(m_cornea.sum()))
-                
-                total_match = (m_iol & m_pupil & m_light & m_cornea).sum()
-                if total_match == 0:
-                    st.error("❌ 0 ligne correspondante après application des 4 filtres.")
-                else:
-                    st.success(f"✅ {total_match} lignes trouvées.")
-
             df_fs_f = df_fs_clean[
                 (df_fs_clean['IOL_Model'] == iol_selected) & 
                 (df_fs_clean['Pupil_Size'] == selected_pupil) & 
                 (df_fs_clean['Light_Condition'] == selected_light) & 
                 (df_fs_clean['Cornea_Type'] == selected_cornea)
             ]
-            
             if 'Frequency' in df_fs_f.columns:
                 df_fs_f = df_fs_f.sort_values(by='Frequency')
-            
             filtered_fs_dfs.append(df_fs_f)
         else:
             filtered_fs_dfs.append(pd.DataFrame())
 
-# --- CALCUL DES PLAGES Y GLOBALES ---
+# CALCUL DES PLAGES Y GLOBALES
 all_va_vals = []
 all_mtfa_vals = []
 all_tf_vals = []
@@ -409,10 +402,7 @@ def generate_mtf_figure(datasets, labels, colors, title, tf_range, target_defocu
         fig.update_yaxes(range=tf_range)
     return fig
 
-# --- FONCTION GRAPHIQUE MTF FREQUENCY SWEEP MODIFIÉE ---
-# --- FONCTION GRAPHIQUE MTF FREQUENCY SWEEP MODIFIÉE ---
 def generate_fs_figure(datasets, labels, colors, title, y_column, fs_range, max_freq=100):
-    """Génère le graphique MTF Frequency Sweep avec axe X dynamique."""
     fig = go.Figure()
     
     for df_fs_sub, label, color in zip(datasets, labels, colors):
@@ -428,8 +418,6 @@ def generate_fs_figure(datasets, labels, colors, title, y_column, fs_range, max_
                 line=dict(width=2.5, color=color)
             ))
 
-    # --- La ligne horizontale fig.add_hline(y=0.1, ...) a été retirée d'ici ---
-
     y_limits = fs_range if (fs_range and len(fs_range) == 2) else [0, 1]
 
     fig.update_layout(
@@ -438,7 +426,7 @@ def generate_fs_figure(datasets, labels, colors, title, y_column, fs_range, max_
         yaxis_title=f"MTF ({y_column})", 
         height=350, 
         margin=dict(l=40, r=40, t=40, b=40), 
-        showlegend=True,  # <--- FORCE L'AFFICHAGE DE LA LÉGENDE
+        showlegend=True, 
         legend=dict(
             orientation="h", 
             yanchor="bottom", 
@@ -460,7 +448,7 @@ def generate_fs_figure(datasets, labels, colors, title, y_column, fs_range, max_
     
     return fig
 
-# Construction des tableaux de synthèse DOF
+# Tableaux DOF
 dof_va_rows = []
 for i in range(num_configs):
     df_sub = filtered_dfs[i]
@@ -484,7 +472,7 @@ for i in range(num_configs):
     })
 df_dof_mtf = pd.DataFrame(dof_mtf_rows)
 
-# Affichage des graphiques et synthèses
+# AFFICHAGE DES GRAPHIQUES ET SYNTHÈSES
 if "1)" in comparison_mode:
     for i in range(num_configs):
         with main_cols[i]:
@@ -492,26 +480,28 @@ if "1)" in comparison_mode:
             df_fs_sub = filtered_fs_dfs[i]
             iol_name = selected_iols[i]
             conf_label = chr(65+i)
+            color = selected_colors[i]
+            
             if df_sub.empty:
                 st.warning(f"No data for {iol_name}.")
             else:
                 # 1. Graph VA
-                fig_va = generate_va_figure([df_sub], [f"VA ({iol_name})"], [COLOR_PALETTE[i % len(COLOR_PALETTE)]], f"Visual Acuity - Config {conf_label}", global_va_range, target_defocus_list)
+                fig_va = generate_va_figure([df_sub], [f"VA ({iol_name})"], [color], f"Visual Acuity - Config {conf_label}", global_va_range, target_defocus_list)
                 st.plotly_chart(fig_va, use_container_width=True)
                 
                 # 2. Graph TF MTFa
-                fig_mtfa = generate_mtfa_figure([df_sub], [f"MTFa ({iol_name})"], [COLOR_PALETTE_GREEN[i % len(COLOR_PALETTE_GREEN)]], f"TF MTFa - Config {conf_label}", global_mtfa_range, target_defocus_list)
+                fig_mtfa = generate_mtfa_figure([df_sub], [f"MTFa ({iol_name})"], [color], f"TF MTFa - Config {conf_label}", global_mtfa_range, target_defocus_list)
                 st.plotly_chart(fig_mtfa, use_container_width=True)
 
                 # 3. Graph MTF Through-Focus
-                fig_tf = generate_mtf_figure([df_sub], [f"MTF ({iol_name})"], [COLOR_PALETTE_CYAN[i % len(COLOR_PALETTE_CYAN)]], f"MTF @ {selected_freq} LP/mm - Config {conf_label}", global_tf_range, target_defocus_list)
+                fig_tf = generate_mtf_figure([df_sub], [f"MTF ({iol_name})"], [color], f"MTF @ {selected_freq} LP/mm - Config {conf_label}", global_tf_range, target_defocus_list)
                 st.plotly_chart(fig_tf, use_container_width=True)
 
-                # 4. Graph MTF Frequency Sweep (Utilise max_freq_x)
+                # 4. Graph MTF Frequency Sweep
                 fig_fs = generate_fs_figure(
                     [df_fs_sub], 
                     [f"FS ({iol_name})"], 
-                    [COLOR_PALETTE_PURPLE[i % len(COLOR_PALETTE_PURPLE)]], 
+                    [color], 
                     f"MTF Frequency Sweep ({selected_fs_metric}) - Config {conf_label}", 
                     selected_fs_metric, 
                     global_fs_range,
@@ -531,21 +521,20 @@ else:
     st.markdown("### Combined Metrics Comparison")
     labels_list = [f"{chr(65+i)}: {selected_iols[i]}" for i in range(num_configs)]
     
-    # Mode Superposé
-    fig_va_combined = generate_va_figure(filtered_dfs, labels_list, COLOR_PALETTE[:num_configs], "Visual Acuity (VA) - Superimposed", global_va_range, target_defocus_list)
+    # Mode Superposé utilisant la palette de couleurs sélectionnée
+    fig_va_combined = generate_va_figure(filtered_dfs, labels_list, selected_colors, "Visual Acuity (VA) - Superimposed", global_va_range, target_defocus_list)
     st.plotly_chart(fig_va_combined, use_container_width=True)
     
-    fig_mtfa_combined = generate_mtfa_figure(filtered_dfs, labels_list, COLOR_PALETTE_GREEN[:num_configs], "TF MTFa - Superimposed", global_mtfa_range, target_defocus_list)
+    fig_mtfa_combined = generate_mtfa_figure(filtered_dfs, labels_list, selected_colors, "TF MTFa - Superimposed", global_mtfa_range, target_defocus_list)
     st.plotly_chart(fig_mtfa_combined, use_container_width=True)
 
-    fig_tf_combined = generate_mtf_figure(filtered_dfs, labels_list, COLOR_PALETTE_CYAN[:num_configs], f"Through Focus (MTF) @ {selected_freq} LP/mm - Superimposed", global_tf_range, target_defocus_list)
+    fig_tf_combined = generate_mtf_figure(filtered_dfs, labels_list, selected_colors, f"Through Focus (MTF) @ {selected_freq} LP/mm - Superimposed", global_tf_range, target_defocus_list)
     st.plotly_chart(fig_tf_combined, use_container_width=True)
 
-    # Graphique Frequency Sweep Superposé (Utilise max_freq_x)
     fig_fs_combined = generate_fs_figure(
         filtered_fs_dfs, 
         labels_list, 
-        COLOR_PALETTE_PURPLE[:num_configs], 
+        selected_colors, 
         f"MTF Frequency Sweep ({selected_fs_metric}) - Superimposed", 
         selected_fs_metric, 
         global_fs_range,
