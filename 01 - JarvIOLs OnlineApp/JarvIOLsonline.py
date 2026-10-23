@@ -110,11 +110,14 @@ DEFAULT_COLORS = [
 # 3. BARRE LATÉRALE : FILTRES OPTIQUES & OPTIONS
 # --------------------------------------------------------------------
 st.sidebar.header("🔬 Optical Parameters")
-selected_pupil = st.sidebar.selectbox("Pupil aperture (mm)", available_pupils)
-selected_light = st.sidebar.selectbox("Light Condition", available_lights)
-selected_cornea = st.sidebar.selectbox("Cornea model", available_corneas)
 
-selected_freq = st.sidebar.selectbox("Spatial frequencies for Through-Focus (LP/mm)", available_frequencies)
+# Case à cocher demandée
+vary_for_all = st.sidebar.checkbox("Vary for all configuration", value=False)
+
+selected_pupil = st.sidebar.selectbox("Pupil aperture (mm)", available_pupils, disabled=vary_for_all)
+selected_light = st.sidebar.selectbox("Light Condition", available_lights, disabled=vary_for_all)
+selected_cornea = st.sidebar.selectbox("Cornea model", available_corneas, disabled=vary_for_all)
+selected_freq = st.sidebar.selectbox("Spatial frequencies for Through-Focus (LP/mm)", available_frequencies, disabled=vary_for_all)
 target_mtf_column = f"MTF_{selected_freq}"
 
 # --- FREQUENCY SWEEP ---
@@ -219,6 +222,12 @@ selected_colors = []
 filtered_dfs = []
 filtered_fs_dfs = []
 
+selected_pupils_list = []
+selected_lights_list = []
+selected_corneas_list = []
+selected_freqs_list = []
+target_mtf_columns_list = []
+
 # Module Debug
 with st.sidebar.expander("🔍 Diagnostic / Debug Excel_FS", expanded=False):
     st.markdown("**État du fichier Excel_FS :**")
@@ -228,7 +237,7 @@ with st.sidebar.expander("🔍 Diagnostic / Debug Excel_FS", expanded=False):
         st.success(f"✅ `df_fs` chargé ({len(df_fs)} lignes)")
         st.write("**Colonnes détectées dans df_fs :**", df_fs.columns.tolist())
 
-# SÉLECTION DES MODÈLES ET DES COULEURS
+# SÉLECTION DES MODÈLES, COULEURS ET PARAMÈTRES OPTIQUES PAR CONFIGURATION
 for i in range(num_configs):
     with main_cols[i]:
         st.header(f"Config {chr(65+i)}")
@@ -250,12 +259,34 @@ for i in range(num_configs):
         )
         selected_colors.append(config_color)
         
+        # Gestion des paramètres optiques individuels si "Vary for all configuration" est coché
+        if vary_for_all:
+            st.markdown("---")
+            st.markdown(f"**Optical Parameters ({chr(65+i)})**")
+            cfg_pupil = st.selectbox("Pupil aperture (mm)", available_pupils, key=f"pupil_{i}")
+            cfg_light = st.selectbox("Light Condition", available_lights, key=f"light_{i}")
+            cfg_cornea = st.selectbox("Cornea model", available_corneas, key=f"cornea_{i}")
+            cfg_freq = st.selectbox("Spatial frequencies (LP/mm)", available_frequencies, key=f"freq_{i}")
+            cfg_mtf_col = f"MTF_{cfg_freq}"
+        else:
+            cfg_pupil = selected_pupil
+            cfg_light = selected_light
+            cfg_cornea = selected_cornea
+            cfg_freq = selected_freq
+            cfg_mtf_col = target_mtf_column
+
+        selected_pupils_list.append(cfg_pupil)
+        selected_lights_list.append(cfg_light)
+        selected_corneas_list.append(cfg_cornea)
+        selected_freqs_list.append(cfg_freq)
+        target_mtf_columns_list.append(cfg_mtf_col)
+
         # Filtrage fichier 1
         df_f = df[
             (df['IOL_Model'] == iol_selected) & 
-            (df['Pupil_Size'] == selected_pupil) & 
-            (df['Light_Condition'] == selected_light) & 
-            (df['Cornea_Type'] == selected_cornea)
+            (df['Pupil_Size'] == cfg_pupil) & 
+            (df['Light_Condition'] == cfg_light) & 
+            (df['Cornea_Type'] == cfg_cornea)
         ].sort_values(by='Defocus')
         filtered_dfs.append(df_f)
 
@@ -264,9 +295,9 @@ for i in range(num_configs):
             df_fs_clean = df_fs.copy()
             df_fs_f = df_fs_clean[
                 (df_fs_clean['IOL_Model'] == iol_selected) & 
-                (df_fs_clean['Pupil_Size'] == selected_pupil) & 
-                (df_fs_clean['Light_Condition'] == selected_light) & 
-                (df_fs_clean['Cornea_Type'] == selected_cornea)
+                (df_fs_clean['Pupil_Size'] == cfg_pupil) & 
+                (df_fs_clean['Light_Condition'] == cfg_light) & 
+                (df_fs_clean['Cornea_Type'] == cfg_cornea)
             ]
             if 'Frequency' in df_fs_f.columns:
                 df_fs_f = df_fs_f.sort_values(by='Frequency')
@@ -280,7 +311,7 @@ all_mtfa_vals = []
 all_tf_vals = []
 all_fs_vals = []
 
-for df_sub in filtered_dfs:
+for i, df_sub in enumerate(filtered_dfs):
     if not df_sub.empty:
         if 'VA' in df_sub.columns:
             va_vals = df_sub['VA'].dropna()
@@ -288,8 +319,9 @@ for df_sub in filtered_dfs:
             mtfa_vals = 0.085 / (va_vals + 0.21)
             all_mtfa_vals.extend(mtfa_vals.tolist())
             
-        if target_mtf_column in df_sub.columns:
-            all_tf_vals.extend(df_sub[target_mtf_column].dropna().tolist())
+        col_to_use = target_mtf_columns_list[i] if i < len(target_mtf_columns_list) else target_mtf_column
+        if col_to_use in df_sub.columns:
+            all_tf_vals.extend(df_sub[col_to_use].dropna().tolist())
 
 for df_fs_sub in filtered_fs_dfs:
     if not df_fs_sub.empty and selected_fs_metric in df_fs_sub.columns:
@@ -380,11 +412,12 @@ def generate_mtfa_figure(datasets, labels, colors, title, mtfa_range, target_def
         fig.update_yaxes(range=mtfa_range)
     return fig
 
-def generate_mtf_figure(datasets, labels, colors, title, tf_range, target_defocus):
+def generate_mtf_figure(datasets, labels, colors, title, tf_range, target_defocus, target_mtf_cols=None):
     fig = go.Figure()
-    for df_sub, label, color in zip(datasets, labels, colors):
+    for idx, (df_sub, label, color) in enumerate(zip(datasets, labels, colors)):
         if not df_sub.empty:
-            y_data = df_sub[target_mtf_column] if target_mtf_column in df_sub.columns else [0] * len(df_sub)
+            col_to_use = target_mtf_cols[idx] if target_mtf_cols and idx < len(target_mtf_cols) else target_mtf_column
+            y_data = df_sub[col_to_use] if col_to_use in df_sub.columns else [0] * len(df_sub)
             fig.add_trace(go.Scatter(
                 x=df_sub['Defocus'], y=y_data, 
                 mode='lines+markers', name=label,
@@ -466,9 +499,11 @@ for i in range(num_configs):
     df_sub = filtered_dfs[i]
     iol_name = selected_iols[i]
     conf_label = f"Config {chr(65+i)} ({iol_name})"
+    col_to_use = target_mtf_columns_list[i] if i < len(target_mtf_columns_list) else target_mtf_column
+    freq_val = selected_freqs_list[i] if i < len(selected_freqs_list) else selected_freq
     dof_mtf_rows.append({
         "Configuration IOL": conf_label,
-        "DOF MTF @ 0.1 (D)": calculate_dof_mtf(df_sub, target_mtf_column, 0.1)
+        f"DOF MTF @ {freq_val} LP/mm (D)": calculate_dof_mtf(df_sub, col_to_use, 0.1)
     })
 df_dof_mtf = pd.DataFrame(dof_mtf_rows)
 
@@ -494,7 +529,7 @@ if "1)" in comparison_mode:
                 st.plotly_chart(fig_mtfa, use_container_width=True)
 
                 # 3. Graph MTF Through-Focus
-                fig_tf = generate_mtf_figure([df_sub], [f"MTF ({iol_name})"], [color], f"MTF @ {selected_freq} LP/mm - Config {conf_label}", global_tf_range, target_defocus_list)
+                fig_tf = generate_mtf_figure([df_sub], [f"MTF ({iol_name})"], [color], f"MTF @ {selected_freqs_list[i]} LP/mm - Config {conf_label}", global_tf_range, target_defocus_list, [target_mtf_columns_list[i]])
                 st.plotly_chart(fig_tf, use_container_width=True)
 
                 # 4. Graph MTF Frequency Sweep
@@ -515,7 +550,7 @@ if "1)" in comparison_mode:
         st.subheader("Visual Acuity (VA) DOF")
         st.dataframe(df_dof_va, use_container_width=True, hide_index=True)
     with col_t2:
-        st.subheader(f"MTF Through-Focus DOF (@ {selected_freq} LP/mm)")
+        st.subheader(f"MTF Through-Focus DOF")
         st.dataframe(df_dof_mtf, use_container_width=True, hide_index=True)
 else:
     st.markdown("### Combined Metrics Comparison")
@@ -528,7 +563,7 @@ else:
     fig_mtfa_combined = generate_mtfa_figure(filtered_dfs, labels_list, selected_colors, "TF MTFa - Superimposed", global_mtfa_range, target_defocus_list)
     st.plotly_chart(fig_mtfa_combined, use_container_width=True)
 
-    fig_tf_combined = generate_mtf_figure(filtered_dfs, labels_list, selected_colors, f"Through Focus (MTF) @ {selected_freq} LP/mm - Superimposed", global_tf_range, target_defocus_list)
+    fig_tf_combined = generate_mtf_figure(filtered_dfs, labels_list, selected_colors, f"Through Focus (MTF) - Superimposed", global_tf_range, target_defocus_list, target_mtf_columns_list)
     st.plotly_chart(fig_tf_combined, use_container_width=True)
 
     fig_fs_combined = generate_fs_figure(
@@ -548,7 +583,7 @@ else:
         st.subheader("📋 VA Depth of Field (DOF)")
         st.dataframe(df_dof_va, use_container_width=True, hide_index=True)
     with col_comb_right:
-        st.subheader(f"📋 MTF Depth of Field (DOF @ {selected_freq} LP/mm)")
+        st.subheader(f"📋 MTF Depth of Field (DOF)")
         st.dataframe(df_dof_mtf, use_container_width=True, hide_index=True)
 
 # --------------------------------------------------------------------
@@ -580,7 +615,7 @@ st.dataframe(pd.DataFrame(energy_data), use_container_width=True, hide_index=Tru
 st.markdown("---")
 st.header("🖼️ USAF Targets Comparison")
 
-def render_usaf_row(selected_iol, df_filtered, label):
+def render_usaf_row(selected_iol, df_filtered, label, pupil_val_param, light_param, cornea_param):
     st.subheader(f"Configuration {label} : **{selected_iol}**")
     if df_filtered.empty:
         st.caption("No data available to display USAF targets.")
@@ -594,21 +629,21 @@ def render_usaf_row(selected_iol, df_filtered, label):
             st.markdown(f"**{d:+.2f} D**")
             
             try:
-                pupil_val = float(selected_pupil)
+                pupil_val = float(pupil_val_param)
                 pupil_str = f"{pupil_val:.1f}"
             except (ValueError, TypeError):
-                pupil_str = str(selected_pupil)
+                pupil_str = str(pupil_val_param)
 
-            light_lower = str(selected_light).lower()
-            light_upper = str(selected_light).upper()
+            light_lower = str(light_param).lower()
+            light_upper = str(light_param).upper()
 
             candidates = [
-                f"{selected_iol}_{pupil_str}_{light_lower}_{selected_cornea}_defocus_{d:.2f}.jpg",
-                f"{selected_iol}_{pupil_str}_{light_upper}_{selected_cornea}_defocus_{d:.2f}.jpg",
-                f"{selected_iol}_{pupil_str}_{light_lower}_{selected_cornea}_defocus_{d:+.2f}.jpg",
-                f"{selected_iol}_{pupil_str}_{light_upper}_{selected_cornea}_defocus_{d:+.2f}.jpg",
-                f"{selected_iol}_{selected_pupil}_{light_lower}_{selected_cornea}_defocus_{d:.2f}.jpg",
-                f"{selected_iol}_{selected_pupil}_{light_upper}_{selected_cornea}_defocus_{d:.2f}.jpg",
+                f"{selected_iol}_{pupil_str}_{light_lower}_{cornea_param}_defocus_{d:.2f}.jpg",
+                f"{selected_iol}_{pupil_str}_{light_upper}_{cornea_param}_defocus_{d:.2f}.jpg",
+                f"{selected_iol}_{pupil_str}_{light_lower}_{cornea_param}_defocus_{d:+.2f}.jpg",
+                f"{selected_iol}_{pupil_str}_{light_upper}_{cornea_param}_defocus_{d:+.2f}.jpg",
+                f"{selected_iol}_{pupil_val_param}_{light_lower}_{cornea_param}_defocus_{d:.2f}.jpg",
+                f"{selected_iol}_{pupil_val_param}_{light_upper}_{cornea_param}_defocus_{d:.2f}.jpg",
             ]
             
             img_loaded = None
@@ -625,5 +660,5 @@ def render_usaf_row(selected_iol, df_filtered, label):
                 st.code(f"{candidates[0]}", language="text")
 
 for i in range(num_configs):
-    render_usaf_row(selected_iols[i], filtered_dfs[i], chr(65+i))
+    render_usaf_row(selected_iols[i], filtered_dfs[i], chr(65+i), selected_pupils_list[i], selected_lights_list[i], selected_corneas_list[i])
     st.markdown(" ")
